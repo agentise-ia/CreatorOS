@@ -1,0 +1,71 @@
+# =====================================================================
+# Environment variables — NUNCA commitar credenciais reais
+# =====================================================================
+.env
+.env.local
+.env.development
+.env.production
+.env.test
+.env.*.local
+.env.supabase
+*.env
+
+# Mantém apenas o template
+!.env.example
+
+# =====================================================================
+# Credenciais e secrets diversos
+# =====================================================================
+*.pem
+*.key
+secrets.json
+credentials.json
+config.local.json
+
+# =====================================================================
+# Logs
+# =====================================================================
+logs
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+pnpm-debug.log*
+lerna-debug.log*
+
+# =====================================================================
+# Dependências e builds
+# =====================================================================
+node_modules
+dist
+dist-ssr
+*.local
+
+# =====================================================================
+# Editor / OS
+# =====================================================================
+.vscode/*
+!.vscode/extensions.json
+.idea
+.DS_Store
+*.suo
+*.ntvs*
+*.njsproj
+*.sln
+*.sw?
+
+# =====================================================================
+# Supabase local
+# =====================================================================
+**/supabase/.branches/
+**/supabase/.temp/
+
+# =====================================================================
+# Claude Code — settings locais (podem conter PATs em allow-list)
+# =====================================================================
+.claude/settings.local.json
+
+# =====================================================================
+# Arquivo local de rotação de credenciais — não commitar
+# =====================================================================
+ROTATION_CHECKLIST.md

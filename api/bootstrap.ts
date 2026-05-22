@@ -557,11 +557,7 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
         })
         steps.push({ step: 'redeploy_triggered', ok: true })
       } else {
-        steps.push({
-          step: 'redeploy_triggered',
-          ok: false,
-          message: 'Nenhum deployment anterior encontrado — push manual necessário',
-        })
+        throw new Error('Projeto Vercel sem deployment anterior — não há base para redeploy')
       }
     }
 

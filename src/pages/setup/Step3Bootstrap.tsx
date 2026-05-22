@@ -49,13 +49,53 @@ const PIPELINE: StepDef[] = [
   },
   {
     key: 'redeploy',
-    label: 'Aguardando redeploy',
-    detail: 'Vercel re-buildando o app com as novas envs',
+    label: 'Disparando redeploy',
+    detail: 'Vercel recebeu o pedido de rebuild com as novas envs',
     matches: (c) => c.includes('redeploy_triggered'),
+  },
+  {
+    key: 'health',
+    label: 'Aguardando reinício',
+    detail: 'Nova versão respondendo com Supabase e CRYPTO_KEY carregados',
+    matches: (c) => c.includes('health_ready'),
   },
 ]
 
 type Status = 'pending' | 'running' | 'done' | 'failed'
+type BootstrapStep = { step?: string } | string
+
+const HEALTH_TIMEOUT_MS = 5 * 60 * 1000
+const HEALTH_POLL_INTERVAL_MS = 3000
+
+function sleep(ms: number) {
+  return new Promise((resolve) => {
+    window.setTimeout(resolve, ms)
+  })
+}
+
+async function waitForHealth(cancelled: () => boolean) {
+  const startedAt = Date.now()
+
+  while (!cancelled()) {
+    try {
+      const res = await fetch(`${window.location.origin}/api/health`, {
+        method: 'GET',
+        cache: 'no-store',
+      })
+      if (res.ok) return
+    } catch {
+      // O deployment pode estar trocando de versão; seguimos aguardando.
+    }
+
+    if (Date.now() - startedAt >= HEALTH_TIMEOUT_MS) {
+      throw new Error(
+        'O redeploy foi disparado, mas a nova versão não ficou pronta em até 5 minutos. Verifique manualmente em vercel.com/dashboard e recarregue esta página.',
+      )
+    }
+
+    await sleep(HEALTH_POLL_INTERVAL_MS)
+  }
+}
 
 export default function Step3Bootstrap({ credentials, onDone, onError }: Step3Props) {
   const [completed, setCompleted] = useState<string[]>([])
@@ -75,9 +115,8 @@ export default function Step3Bootstrap({ credentials, onDone, onError }: Step3Pr
         })
         const data = await res.json()
         if (cancelled) return
-        const steps: string[] = (data.steps_completed ?? []).map(
-          (s: { step?: string } | string) =>
-            typeof s === 'string' ? s : (s.step ?? ''),
+        const steps: string[] = (data.steps_completed ?? []).map((s: BootstrapStep) =>
+          typeof s === 'string' ? s : (s.step ?? ''),
         )
         setCompleted(steps)
         if (!res.ok || !data.success) {
@@ -87,6 +126,9 @@ export default function Step3Bootstrap({ credentials, onDone, onError }: Step3Pr
           return
         }
         if (data.deployment) setDeployment(data.deployment)
+        await waitForHealth(() => cancelled)
+        if (cancelled) return
+        setCompleted([...steps, 'health_ready'])
         setOverall('done')
         onDone({ deployment: data.deployment })
       } catch (err) {
@@ -146,7 +188,7 @@ export default function Step3Bootstrap({ credentials, onDone, onError }: Step3Pr
             Bootstrap concluído ✓
           </div>
           <p className="text-xs text-[#CBD5E1]">
-            Redeploy em andamento. Aguardando o Vercel terminar e recarregando.
+            Nova versão pronta. Vamos concluir a autenticação do owner.
           </p>
           <p className="mt-2 font-mono text-[10px] text-[#94A3B8]">
             Deployment:{' '}
@@ -160,6 +202,29 @@ export default function Step3Bootstrap({ credentials, onDone, onError }: Step3Pr
             </a>
           </p>
         </div>
+      )}
+
+      {overall === 'failed' && deployment?.url && (
+        <p className="text-xs text-[#94A3B8]">
+          Deployment disparado:{' '}
+          <a
+            href={`https://${deployment.url}`}
+            target="_blank"
+            rel="noreferrer"
+            className="text-[#60A5FA] hover:underline"
+          >
+            {deployment.url}
+          </a>
+          {' · '}
+          <a
+            href="https://vercel.com/dashboard"
+            target="_blank"
+            rel="noreferrer"
+            className="text-[#60A5FA] hover:underline"
+          >
+            Abrir dashboard da Vercel
+          </a>
+        </p>
       )}
     </div>
   )

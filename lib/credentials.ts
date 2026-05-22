@@ -87,6 +87,21 @@ export async function listCredentialKeys(): Promise<string[]> {
   return ((data ?? []) as { key: string }[]).map((r) => r.key)
 }
 
+export async function credentialExists(keys: string[]): Promise<Record<string, boolean>> {
+  const uniqueKeys = [...new Set(keys.filter(Boolean))]
+  if (uniqueKeys.length === 0) return {}
+
+  const supabase = getSupabaseAdmin()
+  const { data, error } = await supabase
+    .from('app_settings')
+    .select('key')
+    .in('key', uniqueKeys)
+  if (error) throw error
+
+  const found = new Set(((data ?? []) as { key: string }[]).map((r) => r.key))
+  return Object.fromEntries(uniqueKeys.map((key) => [key, found.has(key)]))
+}
+
 export async function markBootstrapStep(
   step: string,
   metadata: Record<string, unknown> = {},

@@ -1,9 +1,36 @@
 // Validadores das credenciais "core" do Step 2 do wizard.
-// Cada validador faz ping na API real para verificar permissão/atividade.
+//
+// ⚠️ Tokens NUNCA são enviados direto do browser para as APIs de
+// gerenciamento do Supabase/Vercel — isso vazaria o valor no DevTools/Network.
+// Em vez disso, chamamos /api/validate-token (Serverless Function) que faz o
+// ping server-side. A validação de formato (regex/prefixo) acontece
+// client-side só para feedback rápido, sem mandar o valor pra fora.
 
 export type ValidationResult = { ok: boolean; message?: string }
 
+async function validateViaProxy(
+  type: string,
+  value: string,
+  supabase_url?: string,
+): Promise<ValidationResult> {
+  try {
+    const res = await fetch('/api/validate-token', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ type, value, supabase_url }),
+    })
+    const data = (await res.json()) as { valid?: boolean; message?: string }
+    if (!res.ok) {
+      return { ok: false, message: data.message ?? `Erro ${res.status} ao validar` }
+    }
+    return { ok: !!data.valid, message: data.valid ? undefined : data.message }
+  } catch (err) {
+    return { ok: false, message: `Falha de rede ao validar: ${(err as Error).message}` }
+  }
+}
+
 export function validateSupabaseUrl(value: string): ValidationResult {
+  // 100% client-side: só regex, não envolve token nenhum.
   if (!value) return { ok: false, message: 'Obrigatório' }
   const ok = /^https:\/\/[a-z0-9-]+\.supabase\.co\/?$/.test(value)
   return ok
@@ -18,16 +45,7 @@ export async function validateSupabaseAnonKey(
   if (!key) return { ok: false, message: 'Obrigatório' }
   if (!key.startsWith('eyJ')) return { ok: false, message: 'Esperado JWT (eyJ...)' }
   if (!url) return { ok: false, message: 'Preencha a URL primeiro' }
-  try {
-    const res = await fetch(`${url.replace(/\/$/, '')}/rest/v1/`, {
-      headers: { apikey: key },
-    })
-    if (res.status === 401) return { ok: false, message: 'Chave inválida (401)' }
-    if (res.status >= 200 && res.status < 500) return { ok: true }
-    return { ok: false, message: `Erro ${res.status}` }
-  } catch (err) {
-    return { ok: false, message: `Falha de rede: ${(err as Error).message}` }
-  }
+  return validateViaProxy('supabase_anon_key', key, url)
 }
 
 export async function validateSupabaseServiceRole(
@@ -37,46 +55,18 @@ export async function validateSupabaseServiceRole(
   if (!key) return { ok: false, message: 'Obrigatório' }
   if (!key.startsWith('eyJ')) return { ok: false, message: 'Esperado JWT (eyJ...)' }
   if (!url) return { ok: false, message: 'Preencha a URL primeiro' }
-  try {
-    const res = await fetch(`${url.replace(/\/$/, '')}/rest/v1/`, {
-      headers: { apikey: key },
-    })
-    if (res.status === 401) return { ok: false, message: 'Chave inválida (401)' }
-    if (res.status >= 200 && res.status < 500) return { ok: true }
-    return { ok: false, message: `Erro ${res.status}` }
-  } catch (err) {
-    return { ok: false, message: `Falha de rede: ${(err as Error).message}` }
-  }
+  return validateViaProxy('supabase_service_role_key', key, url)
 }
 
 export async function validateSupabasePAT(token: string): Promise<ValidationResult> {
   if (!token) return { ok: false, message: 'Obrigatório' }
   if (!token.startsWith('sbp_')) return { ok: false, message: 'Formato esperado: sbp_...' }
-  try {
-    const res = await fetch('https://api.supabase.com/v1/projects', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (res.status === 401) return { ok: false, message: 'Token sem permissão (401)' }
-    if (!res.ok) return { ok: false, message: `Erro ${res.status}` }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, message: `Falha de rede: ${(err as Error).message}` }
-  }
+  return validateViaProxy('supabase_pat', token)
 }
 
 export async function validateVercelToken(token: string): Promise<ValidationResult> {
   if (!token) return { ok: false, message: 'Obrigatório' }
-  try {
-    const res = await fetch('https://api.vercel.com/v2/user', {
-      headers: { Authorization: `Bearer ${token}` },
-    })
-    if (res.status === 401 || res.status === 403)
-      return { ok: false, message: 'Token inválido ou sem permissão' }
-    if (!res.ok) return { ok: false, message: `Erro ${res.status}` }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, message: `Falha de rede: ${(err as Error).message}` }
-  }
+  return validateViaProxy('vercel_token', token)
 }
 
 export function validateEmail(value: string): ValidationResult {

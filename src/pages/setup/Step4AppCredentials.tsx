@@ -3,12 +3,15 @@
 import { useState } from 'react'
 import { ValidatedInput } from './ValidatedInput'
 import { setupConfig } from '../../../setup.config'
+import supabase from '@/lib/supabase'
 
 interface Step4Props {
+  /** token do owner (login automático no fim do Step 3). */
+  accessToken?: string | null
   onDone: () => void
 }
 
-export default function Step4AppCredentials({ onDone }: Step4Props) {
+export default function Step4AppCredentials({ accessToken, onDone }: Step4Props) {
   const fields = setupConfig.appCredentials
   const [values, setValues] = useState<Record<string, string>>(
     Object.fromEntries(fields.map((f) => [f.key, ''])),
@@ -27,9 +30,24 @@ export default function Step4AppCredentials({ onDone }: Step4Props) {
     setSaving(true)
     setError(null)
     try {
+      // /api/credentials exige JWT do owner. Usa o token do login automático;
+      // se não houver (ex.: refresh no Step 4), tenta a sessão do app.
+      let token = accessToken ?? null
+      if (!token) {
+        const { data } = await supabase.auth.getSession()
+        token = data.session?.access_token ?? null
+      }
+      if (!token) {
+        throw new Error(
+          'Sessão de owner não encontrada. Faça login e reabra /setup para concluir as APIs.',
+        )
+      }
       const res = await fetch('/api/credentials', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${token}`,
+        },
         body: JSON.stringify({ credentials: values }),
       })
       const data = await res.json()

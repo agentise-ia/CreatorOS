@@ -11,6 +11,9 @@
     },
     "api/credentials.ts": {
       "maxDuration": 15
+    },
+    "api/validate-token.ts": {
+      "maxDuration": 15
     }
   },
   "rewrites": [

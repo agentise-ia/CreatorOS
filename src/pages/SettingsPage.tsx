@@ -6,6 +6,7 @@ import { Badge } from '@/components/ui/badge'
 import { ModelSelector } from '@/components/shared/ModelSelector'
 import { useAppStore } from '@/store'
 import { useAppUser } from '@/hooks/useAppUser'
+import supabase from '@/lib/supabase'
 import { setupConfig } from '../../setup.config'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
@@ -26,11 +27,23 @@ export default function SettingsPage() {
     let cancelled = false
     async function load() {
       try {
-        const res = await fetch('/api/credentials')
+        const keys = fields.map((f) => f.key)
+        const {
+          data: { session },
+        } = await supabase.auth.getSession()
+        if (!session) return
+        const res = await fetch(`/api/credentials?keys=${encodeURIComponent(keys.join(','))}`, {
+          headers: { Authorization: `Bearer ${session.access_token}` },
+        })
         if (!res.ok) return
-        const data = (await res.json()) as { keys: string[] }
+        const data = (await res.json()) as Record<string, { exists: boolean }>
         if (cancelled) return
-        setConfigured(new Set(data.keys))
+        const present = new Set(
+          Object.entries(data)
+            .filter(([, v]) => v?.exists)
+            .map(([k]) => k),
+        )
+        setConfigured(present)
       } catch {
         /* ignora — Settings ainda funciona mesmo sem listagem */
       }
@@ -39,6 +52,8 @@ export default function SettingsPage() {
     return () => {
       cancelled = true
     }
+    // fields é constante (setupConfig.appCredentials) — roda só na montagem.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
   async function save(key: string) {
@@ -47,9 +62,18 @@ export default function SettingsPage() {
     setSaveState('saving')
     setErrorMessage(null)
     try {
+      const {
+        data: { session },
+      } = await supabase.auth.getSession()
+      if (!session) {
+        throw new Error('Sessão expirada. Faça login novamente para editar credenciais.')
+      }
       const res = await fetch('/api/credentials', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          Authorization: `Bearer ${session.access_token}`,
+        },
         body: JSON.stringify({ credentials: { [key]: value } }),
       })
       const data = await res.json()

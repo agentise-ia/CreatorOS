@@ -30,12 +30,30 @@ export default function Step2Core({ value, onChange, onBack, onSubmit }: Step2Pr
     password: false,
   })
 
+  // Calculado uma vez na montagem: se campos não-sensíveis voltaram do
+  // localStorage mas os sensíveis estão vazios, foi um restore pós-refresh —
+  // avisamos que as credenciais sensíveis precisam ser digitadas de novo.
+  const [showRestoreNotice] = useState(
+    () =>
+      (!!value.supabase_url || !!value.supabase_anon_key || !!value.owner_email) &&
+      !value.supabase_service_role_key &&
+      !value.supabase_pat &&
+      !value.vercel_token &&
+      !value.owner_password,
+  )
+
   const allValid = Object.values(valid).every(Boolean)
 
   const set = (k: keyof CoreCredentials, v: string) => onChange({ ...value, [k]: v })
 
   return (
     <div className="space-y-5">
+      {showRestoreNotice && (
+        <div className="rounded-lg border border-[rgba(234,179,8,0.3)] bg-[rgba(234,179,8,0.06)] p-3 text-xs text-[#FDE68A]">
+          Por segurança, suas credenciais sensíveis (service_role, PAT, Vercel
+          token e senha) não ficam salvas e precisam ser digitadas novamente.
+        </div>
+      )}
       <ValidatedInput
         label="Supabase URL"
         value={value.supabase_url}

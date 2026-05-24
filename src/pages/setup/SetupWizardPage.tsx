@@ -14,7 +14,15 @@ import { setupConfig } from '../../../setup.config'
 const STEP_LABELS = ['Preparar', 'Credenciais', 'Bootstrap', 'APIs']
 
 export default function SetupWizardPage() {
-  const [step, setStep] = useState<number>(() => loadStep<number>('step', 1))
+  const [step, setStep] = useState<number>(() => {
+    const saved = loadStep<number>('step', 1)
+    // Step 3 dispara /api/bootstrap usando creds sensíveis (service_role/PAT/
+    // Vercel/senha) que só vivem em memória React e somem num reload. Se
+    // retomamos no Step 3 após um reload, recuamos pro Step 2 pra re-digitá-las
+    // — senão o Step 3 POSTaria com campos vazios → 400 "Campo obrigatório
+    // ausente". O bootstrap é idempotente (retoma pelos checkpoints).
+    return saved === 3 ? 2 : saved
+  })
   // emptyCore garante que campos sensíveis (que não persistem) comecem vazios
   // mesmo quando loadStep('core') traz de volta só os campos não-sensíveis.
   const [core, setCore] = useState<CoreCredentials>(() => ({

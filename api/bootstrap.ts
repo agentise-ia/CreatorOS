@@ -450,14 +450,12 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
       await markStep(body.supabase_url, body.supabase_service_role_key, 'ef_secrets_set')
       steps.push({ step: 'ef_secrets_set', ok: true })
 
-      // Deploy cada EF
+      // Deploy cada EF — SEMPRE re-deploya (deploy é upsert idempotente), pra que
+      // mudanças no código de uma EF subam ao re-rodar o Step 3. markStep fica só
+      // como diagnóstico (sem skip).
       const slugs = await listFunctions()
       for (const slug of slugs) {
         const stepKey = `ef:${slug}`
-        if (await stepDone(body.supabase_url, body.supabase_service_role_key, stepKey)) {
-          steps.push({ step: stepKey, ok: true, skipped: true })
-          continue
-        }
         try {
           await deployEdgeFunction(body.supabase_pat, ref, slug)
           await markStep(body.supabase_url, body.supabase_service_role_key, stepKey)

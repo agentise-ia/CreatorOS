@@ -67,8 +67,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
             .json({ valid: false, message: 'URL Supabase válida necessária' })
         }
         const base = supabase_url.replace(/\/$/, '')
-        const r = await fetch(`${base}/rest/v1/`, {
-          headers: { apikey: value, Authorization: `Bearer ${value}` },
+        // Valida contra /auth/v1/settings (GoTrue): 200 = chave aceita pelo
+        // projeto, 401 = inválida. NÃO usamos /rest/v1/ — o root do PostgREST
+        // (OpenAPI) é restrito ao service_role na config padrão do Supabase, então
+        // uma anon key VÁLIDA leva 401 ali (falso negativo "chave inválida").
+        // Só apikey: a publishable/anon key não precisa ir como Bearer.
+        const r = await fetch(`${base}/auth/v1/settings`, {
+          headers: { apikey: value },
         })
         if (r.status === 401) {
           message = 'Chave Supabase inválida ou sem permissão'

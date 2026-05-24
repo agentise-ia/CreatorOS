@@ -93,6 +93,26 @@ async function stepDone(url: string, serviceKey: string, step: string): Promise<
   }
 }
 
+// Tabelas criadas via SQL direto (Management API) não aparecem no PostgREST até
+// ele recarregar o schema cache — o primeiro markStep falha com
+// "Could not find the table 'public._bootstrap_state' in the schema cache".
+// Espera a tabela ficar visível (a init já dispara NOTIFY pgrst 'reload schema').
+async function waitForSchema(
+  url: string,
+  serviceKey: string,
+  table: string,
+  timeoutMs = 15000,
+): Promise<void> {
+  const supabase = await getAdminClient(url, serviceKey)
+  const start = Date.now()
+  for (;;) {
+    const { error } = await supabase.from(table).select('*').limit(1)
+    if (!error || !/schema cache|find the table/i.test(error.message)) return
+    if (Date.now() - start >= timeoutMs) return
+    await new Promise((r) => setTimeout(r, 1000))
+  }
+}
+
 // ---------------------------------------------------------------------
 // Helpers — Vercel Management API
 // ---------------------------------------------------------------------
@@ -380,8 +400,13 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
           updated_at TIMESTAMPTZ NOT NULL DEFAULT NOW()
         );
         ALTER TABLE public.app_settings ENABLE ROW LEVEL SECURITY;
+
+        NOTIFY pgrst, 'reload schema';
       `
       await runSQL(body.supabase_pat, ref, initSQL)
+      // Sem isso, o markStep abaixo bate no PostgREST antes do schema cache
+      // recarregar e falha com "Could not find the table ... in the schema cache".
+      await waitForSchema(body.supabase_url, body.supabase_service_role_key, '_bootstrap_state')
       await markStep(body.supabase_url, body.supabase_service_role_key, 'init')
       steps.push({ step: 'init', ok: true })
     }

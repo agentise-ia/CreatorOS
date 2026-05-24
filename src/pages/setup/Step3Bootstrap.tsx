@@ -102,6 +102,7 @@ export default function Step3Bootstrap({ credentials, onDone, onError }: Step3Pr
   const [overall, setOverall] = useState<Status>('running')
   const [errMsg, setErrMsg] = useState<string | null>(null)
   const [deployment, setDeployment] = useState<{ id?: string; url?: string } | undefined>()
+  const [attempt, setAttempt] = useState(0)
 
   useEffect(() => {
     let cancelled = false
@@ -143,14 +144,16 @@ export default function Step3Bootstrap({ credentials, onDone, onError }: Step3Pr
       cancelled = true
     }
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [])
+  }, [attempt])
 
   function retry() {
     setErrMsg(null)
     setCompleted([])
     setOverall('running')
-    // dispara novo effect remontando — toggle via state hack
-    window.location.reload()
+    // Re-dispara o bootstrap SEM reload. Um window.location.reload() limpava as
+    // credenciais sensíveis (service_role/PAT/Vercel/senha) — que por segurança
+    // não ficam no localStorage — e o retry voltava com campos vazios.
+    setAttempt((a) => a + 1)
   }
 
   return (

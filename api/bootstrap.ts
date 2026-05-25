@@ -235,8 +235,13 @@ async function readFunctionFiles(
       }
     }
   }
-  await walk(dir, '')
-  // Inclui _shared/* como subfolder ao lado de index.ts
+  // Prefixa os arquivos da função com o slug → entrypoint "<slug>/index.ts".
+  // O Supabase empacota tudo sob source/, e os imports são "../_shared/...".
+  // Assim, de source/<slug>/index.ts o "../_shared" cai em source/_shared
+  // (correto). Sem o prefixo, de source/index.ts o "../_shared" cairia FORA da
+  // raiz do bundle → "Module not found _shared/credentials.ts".
+  await walk(dir, slug)
+  // Inclui _shared/* como irmão da pasta da função (source/_shared)
   const sharedDir = path.join(FUNCTIONS_DIR, '_shared')
   try {
     const sharedEntries = await readdir(sharedDir)
@@ -251,7 +256,7 @@ async function readFunctionFiles(
   } catch {
     /* sem _shared → ignora */
   }
-  return { entrypoint: 'index.ts', files: out }
+  return { entrypoint: path.posix.join(slug, 'index.ts'), files: out }
 }
 
 // ---------------------------------------------------------------------

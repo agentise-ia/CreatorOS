@@ -1,7 +1,7 @@
 import { useEffect, useState } from 'react'
-import { Navigate, useSearchParams } from 'react-router-dom'
+import { Navigate } from 'react-router-dom'
 import supabase from '@/lib/supabase'
-import { validateInviteToken } from '@/lib/api'
+import { acceptNativeInvite } from '@/lib/api'
 import { APP_NAME } from '@/lib/brand'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
@@ -14,55 +14,66 @@ import {
   CardTitle,
 } from '@/components/ui/card'
 
+// O convite nativo do Supabase manda um magic link que, ao ser aberto, cria a
+// sessão automaticamente (o client processa o hash da URL). Aqui detectamos essa
+// sessão, pedimos a senha e finalizamos via accept_native_invite (cria o
+// app_users 'member' e marca o convite usado).
 export default function InvitePage() {
-  const [searchParams] = useSearchParams()
-  const token = searchParams.get('token')
-
-  const [validating, setValidating] = useState(true)
-  const [valid, setValid] = useState(false)
+  const [checking, setChecking] = useState(true)
   const [email, setEmail] = useState<string | null>(null)
   const [password, setPassword] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [success, setSuccess] = useState(false)
 
   useEffect(() => {
-    if (!token) {
-      // eslint-disable-next-line react-hooks/set-state-in-effect
-      setValidating(false)
+    let active = true
+
+    // Erro vindo no hash (ex.: link expirado): #error=...&error_description=...
+    const hash = new URLSearchParams(window.location.hash.replace(/^#/, ''))
+    const hashError = hash.get('error_description') ?? hash.get('error')
+    if (hashError) {
+      setError(decodeURIComponent(hashError))
+      setChecking(false)
       return
     }
-    validateInviteToken(token)
-      .then((res) => {
-        setValid(res.valid)
-        setEmail(res.email)
-      })
-      .catch((e) => setError(e instanceof Error ? e.message : String(e)))
-      .finally(() => setValidating(false))
-  }, [token])
 
-  if (!token) return <Navigate to="/login" replace />
+    const { data: sub } = supabase.auth.onAuthStateChange((_e, session) => {
+      if (!active) return
+      if (session?.user) {
+        setEmail(session.user.email ?? null)
+        setChecking(false)
+      }
+    })
+    supabase.auth.getSession().then(({ data }) => {
+      if (!active) return
+      if (data.session?.user) setEmail(data.session.user.email ?? null)
+      setChecking(false)
+    })
+
+    return () => {
+      active = false
+      sub.subscription.unsubscribe()
+    }
+  }, [])
 
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault()
-    if (!email) return
     setError(null)
     setLoading(true)
-
-    const { error: authError } = await supabase.auth.signUp({
-      email,
-      password,
-      options: { data: { invite_token: token } },
-    })
-
-    setLoading(false)
-
-    if (authError) {
-      setError(authError.message)
-      return
+    try {
+      const { error: updErr } = await supabase.auth.updateUser({ password })
+      if (updErr) throw new Error(updErr.message)
+      await acceptNativeInvite()
+      // Reload completo pra o app recarregar a sessão + o app_users recém-criado.
+      window.location.href = '/'
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err))
+      setLoading(false)
     }
-    setSuccess(true)
   }
+
+  // Sem sessão e sem erro = acesso direto / link inválido → manda pro login.
+  if (!checking && !email && !error) return <Navigate to="/login" replace />
 
   return (
     <div
@@ -86,15 +97,14 @@ export default function InvitePage() {
         </CardHeader>
 
         <CardContent className="flex flex-col gap-6">
-          {validating ? (
+          {checking ? (
             <p className="text-center text-sm text-muted-foreground">Validando convite...</p>
-          ) : !valid ? (
+          ) : error ? (
             <div className="rounded-xl border border-destructive/30 bg-destructive/5 p-4 text-center text-sm text-destructive">
-              Convite inválido, expirado ou já utilizado. Solicite um novo ao owner.
-            </div>
-          ) : success ? (
-            <div className="rounded-xl border border-[rgba(59,130,246,0.25)] bg-[rgba(59,130,246,0.05)] p-4 text-center text-sm text-foreground">
-              Conta criada! Verifique seu email para confirmar e depois acesse pela tela de login.
+              {error}
+              <div className="mt-2 text-muted-foreground">
+                Convite inválido ou expirado. Solicite um novo ao owner.
+              </div>
             </div>
           ) : (
             <form onSubmit={handleSubmit} className="flex flex-col gap-4">
@@ -109,7 +119,7 @@ export default function InvitePage() {
                 />
               </div>
               <div className="flex flex-col gap-2">
-                <Label htmlFor="password" className="text-[#CBD5E1]">Senha</Label>
+                <Label htmlFor="password" className="text-[#CBD5E1]">Defina sua senha</Label>
                 <Input
                   id="password"
                   type="password"
@@ -127,12 +137,10 @@ export default function InvitePage() {
                 disabled={loading || password.length < 8}
                 className="w-full btn-gradient"
               >
-                {loading ? 'Criando conta...' : 'Aceitar convite'}
+                {loading ? 'Finalizando...' : 'Aceitar convite'}
               </Button>
             </form>
           )}
-
-          {error && <p className="text-center text-sm text-destructive">{error}</p>}
         </CardContent>
       </Card>
     </div>

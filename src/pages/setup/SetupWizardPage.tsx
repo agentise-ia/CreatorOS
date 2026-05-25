@@ -139,7 +139,7 @@ export default function SetupWizardPage() {
     )
   } else {
     title = 'APIs da aplicação'
-    subtitle = 'Apify (scraping), OpenAI (Whisper + GPT) e Gemini (vídeo) são obrigatórias. Resend é opcional.'
+    subtitle = 'Apify (scraping), OpenAI (Whisper + GPT) e Gemini (vídeo).'
     body = (
       <Step4AppCredentials
         accessToken={ownerToken}

@@ -238,10 +238,10 @@ export async function restoreScriptVersion(
 }
 
 export async function createInvite(email: string): Promise<{
-  invite_id: string
-  invite_url: string
-  expires_at: string
-  email_sent: boolean
+  ok: boolean
+  email: string
+  invite_id?: string
+  expires_at?: string
 }> {
   const { data, error } = await supabase.functions.invoke('create-invite', {
     body: { email },
@@ -265,15 +265,9 @@ export async function hasOwner(): Promise<boolean> {
   return Boolean(data)
 }
 
-export async function validateInviteToken(token: string): Promise<{
-  email: string | null
-  valid: boolean
-}> {
-  const { data, error } = await supabase.rpc('validate_invite_token', { p_token: token })
-  if (error) throw new Error(`Falha ao validar convite: ${error.message}`)
-  const row = Array.isArray(data) ? data[0] : data
-  if (!row) return { email: null, valid: false }
-  return { email: (row as { email: string }).email, valid: Boolean((row as { valid: boolean }).valid) }
+export async function acceptNativeInvite(): Promise<void> {
+  const { error } = await supabase.rpc('accept_native_invite')
+  if (error) throw new Error(`Falha ao aceitar convite: ${error.message}`)
 }
 
 export async function generateScript(params: {

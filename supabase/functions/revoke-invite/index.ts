@@ -53,6 +53,13 @@ serve(async (req: Request) => {
     const body: RevokeInviteRequest = await req.json()
     if (!body.invite_id) return json({ error: 'invite_id obrigatório' }, 400)
 
+    // Pega o email do convite antes de revogar (pra remover o usuário pendente).
+    const { data: inviteRow } = await supabase
+      .from('invites')
+      .select('email')
+      .eq('id', body.invite_id)
+      .maybeSingle()
+
     const { error: updateErr } = await supabase
       .from('invites')
       .update({ revoked_at: new Date().toISOString() })
@@ -61,6 +68,26 @@ serve(async (req: Request) => {
       .is('revoked_at', null)
 
     if (updateErr) return json({ error: updateErr.message }, 500)
+
+    // Best-effort: deleta o usuário convidado que ainda NÃO entrou (sem login e
+    // sem app_users). Assim o convite nativo pendente some do projeto também.
+    const email = (inviteRow as { email?: string } | null)?.email
+    if (email) {
+      try {
+        const { data: list } = await supabase.auth.admin.listUsers({ page: 1, perPage: 200 })
+        const target = list?.users?.find((u) => u.email?.toLowerCase() === email.toLowerCase())
+        if (target && !target.last_sign_in_at) {
+          const { data: appUser } = await supabase
+            .from('app_users')
+            .select('user_id')
+            .eq('user_id', target.id)
+            .maybeSingle()
+          if (!appUser) await supabase.auth.admin.deleteUser(target.id)
+        }
+      } catch {
+        /* não-fatal: o convite já foi revogado no tracking */
+      }
+    }
 
     return json({ ok: true })
   } catch (e) {

@@ -24,7 +24,7 @@ export default function TeamPage() {
   const [email, setEmail] = useState('')
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
-  const [lastInviteUrl, setLastInviteUrl] = useState<string | null>(null)
+  const [sentTo, setSentTo] = useState<string | null>(null)
 
   async function refresh() {
     const [{ data: usersData }, { data: invitesData }] = await Promise.all([
@@ -55,8 +55,9 @@ export default function TeamPage() {
     setError(null)
     setLoading(true)
     try {
-      const result = await createInvite(email)
-      setLastInviteUrl(result.invite_url)
+      const target = email
+      await createInvite(target)
+      setSentTo(target)
       setEmail('')
       await refresh()
     } catch (e) {
@@ -76,10 +77,6 @@ export default function TeamPage() {
     }
   }
 
-  async function handleCopy(url: string) {
-    await navigator.clipboard.writeText(url)
-  }
-
   return (
     <div className="flex flex-col gap-6 p-6">
       <header>
@@ -93,7 +90,7 @@ export default function TeamPage() {
         <CardHeader>
           <CardTitle>Convidar novo membro</CardTitle>
           <CardDescription>
-            O convidado recebe um link válido por 7 dias. Apenas o owner pode criar convites.
+            O convidado recebe um email com um magic link (válido por 7 dias). Apenas o owner pode criar convites.
           </CardDescription>
         </CardHeader>
         <CardContent>
@@ -115,18 +112,9 @@ export default function TeamPage() {
             </Button>
           </form>
 
-          {lastInviteUrl && (
-            <div className="mt-4 flex flex-col gap-2 rounded-xl border border-[rgba(59,130,246,0.25)] bg-[rgba(59,130,246,0.05)] p-3 text-sm">
-              <p className="text-muted-foreground">Link de convite gerado:</p>
-              <code className="break-all text-foreground">{lastInviteUrl}</code>
-              <Button
-                variant="ghost"
-                size="sm"
-                onClick={() => handleCopy(lastInviteUrl)}
-                className="self-start"
-              >
-                Copiar link
-              </Button>
+          {sentTo && (
+            <div className="mt-4 rounded-xl border border-[rgba(59,130,246,0.25)] bg-[rgba(59,130,246,0.05)] p-3 text-sm text-foreground">
+              Convite enviado por email para <strong>{sentTo}</strong>. O magic link expira em 7 dias.
             </div>
           )}
 
@@ -154,20 +142,9 @@ export default function TeamPage() {
                       Expira em {new Date(inv.expires_at).toLocaleDateString('pt-BR')}
                     </span>
                   </div>
-                  <div className="flex gap-2">
-                    <Button
-                      variant="ghost"
-                      size="sm"
-                      onClick={() =>
-                        handleCopy(`${window.location.origin}/invite?token=${inv.id}`)
-                      }
-                    >
-                      Copiar link
-                    </Button>
-                    <Button variant="ghost" size="sm" onClick={() => handleRevoke(inv.id)}>
-                      Revogar
-                    </Button>
-                  </div>
+                  <Button variant="ghost" size="sm" onClick={() => handleRevoke(inv.id)}>
+                    Revogar
+                  </Button>
                 </li>
               ))}
             </ul>

@@ -87,32 +87,6 @@ async function validateGemini(value: string): Promise<ValidationResult> {
   }
 }
 
-async function validateResend(value: string): Promise<ValidationResult> {
-  if (!value) return { ok: true } // opcional
-  if (!value.startsWith('re_')) {
-    return { ok: false, message: 'Formato esperado: re_...' }
-  }
-  try {
-    const res = await fetch('https://api.resend.com/domains', {
-      headers: { Authorization: `Bearer ${value}` },
-    })
-    if (res.status === 401) return { ok: false, message: 'Chave inválida (401)' }
-    if (!res.ok) return { ok: false, message: `Erro ${res.status} ao validar` }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, message: `Falha de rede: ${(err as Error).message}` }
-  }
-}
-
-async function validateEmail(value: string): Promise<ValidationResult> {
-  if (!value) return { ok: true } // opcional
-  const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/
-  if (!emailRegex.test(value)) {
-    return { ok: false, message: 'Email inválido' }
-  }
-  return { ok: true }
-}
-
 // ---------------------------------------------------------------------
 // Manifesto Creator OS
 // ---------------------------------------------------------------------
@@ -160,25 +134,6 @@ export const setupConfig: SetupConfig = {
       docsUrl: 'https://aistudio.google.com/app/apikey',
       helpText: 'Usado para análise visual de vídeo',
       validate: validateGemini,
-    },
-    {
-      key: 'resend_api_key',
-      label: 'Resend API Key (opcional)',
-      placeholder: 're_...',
-      inputType: 'password',
-      optional: true,
-      docsUrl: 'https://resend.com/api-keys',
-      helpText: 'Se configurado, convites de equipe são enviados por email',
-      validate: validateResend,
-    },
-    {
-      key: 'email_from',
-      label: 'Email remetente (opcional)',
-      placeholder: 'noreply@seudominio.com',
-      inputType: 'text',
-      optional: true,
-      helpText: 'Endereço verificado no Resend (só preencha se usar Resend)',
-      validate: validateEmail,
     },
   ],
 }

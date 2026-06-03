@@ -34,7 +34,7 @@ export function StructureTimeline({ analysis, onSeek }: StructureTimelineProps) 
                 : 'Análise falhou'}
             </p>
             <p className="text-[11px] text-muted-foreground">
-              O pipeline (Whisper + Gemini + LLM) não conseguiu concluir essa análise.
+              O pipeline (Whisper + LLM) não conseguiu concluir essa análise.
               Volte para o perfil deste reel e clique em <span className="text-foreground">"Analisar este reel"</span> de novo.
             </p>
           </div>

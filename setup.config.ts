@@ -69,24 +69,6 @@ async function validateApify(value: string): Promise<ValidationResult> {
   }
 }
 
-async function validateGemini(value: string): Promise<ValidationResult> {
-  if (!value.startsWith('AIza')) {
-    return { ok: false, message: 'Formato esperado: AIza...' }
-  }
-  try {
-    const res = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models?key=${encodeURIComponent(value)}`,
-    )
-    if (res.status === 400 || res.status === 401 || res.status === 403) {
-      return { ok: false, message: 'Chave inválida ou sem permissão' }
-    }
-    if (!res.ok) return { ok: false, message: `Erro ${res.status} ao validar` }
-    return { ok: true }
-  } catch (err) {
-    return { ok: false, message: `Falha de rede: ${(err as Error).message}` }
-  }
-}
-
 // ---------------------------------------------------------------------
 // Manifesto Creator OS
 // ---------------------------------------------------------------------
@@ -125,15 +107,6 @@ export const setupConfig: SetupConfig = {
       docsUrl: 'https://platform.openai.com/api-keys',
       helpText: 'Usado por Whisper (transcrição) e GPT (análise/geração)',
       validate: validateOpenAI,
-    },
-    {
-      key: 'gemini_api_key',
-      label: 'Google Gemini API Key',
-      placeholder: 'AIza...',
-      inputType: 'password',
-      docsUrl: 'https://aistudio.google.com/app/apikey',
-      helpText: 'Usado para análise visual de vídeo',
-      validate: validateGemini,
     },
   ],
 }

@@ -12,7 +12,7 @@
 Creator OS é uma ferramenta self-hosted que automatiza o ciclo de criação de Reels para Instagram:
 
 1. **Extrai** os Reels mais virais de perfis-referência (via Apify).
-2. **Analisa** estrutura narrativa (hook, desenvolvimento, CTA) e elementos de edição (transições, b-rolls, música, efeitos sonoros, texto na tela) com timestamps — usando Whisper, Gemini e GPT.
+2. **Analisa** estrutura narrativa (hook, desenvolvimento, CTA) a partir da transcrição — usando Whisper + GPT.
 3. **Aprende** o tom de fala do criador a partir dos próprios vídeos (Voice Profile).
 4. **Gera** roteiros prontos para teleprompter + relatório de edição estruturado para o editor de vídeo.
 
@@ -25,7 +25,7 @@ Você roda na sua própria conta Supabase + Vercel, com suas próprias chaves de
 - **Frontend:** React 19, Vite 8, TypeScript 5.9, Tailwind 4, shadcn/ui, Zustand 5, React Router 7.
 - **Backend:** Supabase (PostgreSQL + Auth + Storage + Realtime + Edge Functions Deno).
 - **Hosting:** Vercel para o frontend; Supabase Cloud para tudo do lado do servidor.
-- **Análise de conteúdo:** Apify (scraping), OpenAI Whisper (transcrição), Google Gemini (análise visual de vídeo + GPT/Gemini para análise estrutural e geração de roteiros).
+- **Análise de conteúdo:** Apify (scraping), OpenAI Whisper (transcrição) e OpenAI GPT (análise estrutural e geração de roteiros).
 
 Detalhes em [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
@@ -42,14 +42,14 @@ Setup zero-config: tudo pelo wizard no próprio app deployado. Sem terminal, sem
    - Supabase Personal Access Token em [supabase.com/dashboard/account/tokens](https://supabase.com/dashboard/account/tokens)
    - Vercel Token em [vercel.com/account/tokens](https://vercel.com/account/tokens)
 5. **Abra a URL do seu deploy Vercel.** O app detecta o estado uninitialized e redireciona automaticamente para `/setup`.
-6. **Siga o wizard.** Quatro passos: preparação → credenciais core → bootstrap automatizado (migrations, Edge Functions, envs Vercel, redeploy) → APIs da aplicação (Apify, OpenAI, Gemini).
+6. **Siga o wizard.** Quatro passos: preparação → credenciais core → bootstrap automatizado (migrations, Edge Functions, envs Vercel, redeploy) → APIs da aplicação (Apify, OpenAI).
 7. **Pronto.** Após o redeploy, faça login com o email/senha que você criou no wizard.
 
 Custos estimados abaixo. Tempo total de setup: ~5 minutos. Detalhes técnicos em [`ARCHITECTURE.md`](./ARCHITECTURE.md).
 
 ### Refazer setup ou trocar uma chave
 
-- **Trocar uma API key específica** (Apify/OpenAI/Gemini/Resend): em `/settings`, cole o novo valor no campo correspondente e clique em "Salvar". O valor anterior é substituído.
+- **Trocar uma API key específica** (Apify/OpenAI/Resend): em `/settings`, cole o novo valor no campo correspondente e clique em "Salvar". O valor anterior é substituído.
 - **Refazer todo o setup**: abra `/setup` (sempre acessível) e siga o wizard de novo. As operações são idempotentes — migrations já aplicadas são puladas.
 
 ---
@@ -87,11 +87,10 @@ Após o owner ser criado, self-signup público fica fechado: novos usuários só
 | Item | Custo |
 |---|---|
 | Whisper (transcrição) | ~$0.006 / minuto |
-| Gemini (análise visual) | ~$0.0075 / vídeo |
 | GPT-4o (análise estrutural + geração de roteiros) | ~$0.03 / análise |
 | Apify (scraping) | ~$2.60 / 1.000 resultados |
-| **Total por Reel analisado** | **~$0.40–0.80** |
-| **Perfil de 50 Reels** | **~$2.50–4.00** |
+| **Total por Reel analisado** | **~$0.35–0.70** |
+| **Perfil de 50 Reels** | **~$2.00–3.50** |
 
 Supabase free tier e Vercel free tier costumam absorver o tráfego inicial.
 

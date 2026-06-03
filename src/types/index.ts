@@ -4,7 +4,7 @@
 
 // --- Model Provider ---
 
-export type ModelProvider = 'openai' | 'gemini';
+export type ModelProvider = 'openai';
 
 export type ModelOption = {
   provider: ModelProvider;
@@ -16,9 +16,6 @@ export type ModelOption = {
 export const MODEL_OPTIONS: ModelOption[] = [
   { provider: 'openai', model: 'gpt-4.1', label: 'GPT-4.1', description: 'Robusto, contexto longo' },
   { provider: 'openai', model: 'gpt-4o', label: 'GPT-4o', description: 'Multimodal padrão, rápido' },
-  { provider: 'gemini', model: 'gemini-2.5-pro', label: 'Gemini 2.5 Pro', description: 'Flagship Google — máxima capacidade' },
-  { provider: 'gemini', model: 'gemini-2.5-flash', label: 'Gemini 2.5 Flash', description: 'Custo-benefício, baixa latência' },
-  { provider: 'gemini', model: 'gemini-2.5-flash-lite', label: 'Gemini 2.5 Flash Lite', description: 'Mais barato e rápido da família 2.5' },
 ];
 
 // --- Profiles ---
@@ -179,7 +176,6 @@ export type ContentAnalysis = {
   visual_effects: VisualEffect[];
   viral_patterns: ViralPatterns;
   editing_analysis_status: 'pending' | 'processing' | 'completed' | 'failed';
-  gemini_model: string | null;
   claude_model: string | null;
   analyzed_at: string;
 };
@@ -253,4 +249,5 @@ export type ProcessingJob = {
   started_at: string | null;
   completed_at: string | null;
   created_at: string;
+  updated_at: string;
 };

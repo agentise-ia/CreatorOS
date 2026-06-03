@@ -9,11 +9,14 @@ const CORS_HEADERS = {
 }
 
 const MAX_RETRIES = 3
+const FETCH_TIMEOUT_MS = 90_000 // 90s por request (upload/download de vídeo + LLM)
+const PER_REEL_TIMEOUT_MS = 150_000 // 2.5 min por reel
+const OVERALL_JOB_TIMEOUT_MS = 600_000 // 10 min wall-clock pro job inteiro
 
 interface AnalyzeRequest {
   reel_ids: string[]
   user_id: string
-  model_provider: 'openai' | 'gemini'
+  model_provider: 'openai'
   model_id: string
 }
 
@@ -24,6 +27,15 @@ interface EditingElements {
   broll_segments: unknown[]
   text_overlays: unknown[]
   visual_effects: unknown[]
+}
+
+const EMPTY_EDITING_ELEMENTS: EditingElements = {
+  transitions: [],
+  music_segments: [],
+  sound_effects: [],
+  broll_segments: [],
+  text_overlays: [],
+  visual_effects: [],
 }
 
 function log(level: string, message: string, data?: Record<string, unknown>) {
@@ -37,8 +49,11 @@ async function fetchWithRetry(
 ): Promise<Response> {
   let lastError: Error | null = null
   for (let attempt = 1; attempt <= retries; attempt++) {
+    // AbortSignal.timeout aborta a conexão TCP, evitando requests pendurados
+    // que NUNCA retornam (caso comum: provider trava após enviar headers).
+    const signal = options.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS)
     try {
-      const response = await fetch(url, options)
+      const response = await fetch(url, { ...options, signal })
       if (response.ok || response.status < 500) return response
       lastError = new Error(`HTTP ${response.status}: ${await response.text()}`)
       log('warn', `Attempt ${attempt}/${retries} failed`, { status: response.status })
@@ -89,266 +104,10 @@ async function transcribeWithWhisper(
   }
 }
 
-// Upload video to Gemini Files API, then reference it — much faster than inline base64
-async function uploadToGeminiFiles(
-  videoUrl: string,
-  geminiKey: string
-): Promise<string | null> {
-  try {
-    // Download video
-    const videoResponse = await fetchWithRetry(videoUrl, { method: 'GET' })
-    const videoBlob = await videoResponse.blob()
-    const videoSize = videoBlob.size
-
-    log('info', `Video size: ${(videoSize / 1024 / 1024).toFixed(1)}MB`)
-
-    // Skip if > 20MB (Gemini inline limit; Files API supports up to 2GB but slow)
-    if (videoSize > 20 * 1024 * 1024) {
-      log('info', 'Video too large for Gemini, skipping visual analysis')
-      return null
-    }
-
-    // Upload via resumable upload to Files API
-    const startResponse = await fetch(
-      `https://generativelanguage.googleapis.com/upload/v1beta/files?key=${geminiKey}`,
-      {
-        method: 'POST',
-        headers: {
-          'X-Goog-Upload-Protocol': 'resumable',
-          'X-Goog-Upload-Command': 'start',
-          'X-Goog-Upload-Header-Content-Length': String(videoSize),
-          'X-Goog-Upload-Header-Content-Type': 'video/mp4',
-          'Content-Type': 'application/json',
-        },
-        body: JSON.stringify({ file: { display_name: 'reel.mp4' } }),
-      }
-    )
-
-    const uploadUrl = startResponse.headers.get('X-Goog-Upload-URL')
-    if (!uploadUrl) {
-      log('warn', 'No upload URL returned from Gemini Files API')
-      return null
-    }
-
-    // Upload the bytes
-    const uploadResponse = await fetch(uploadUrl, {
-      method: 'PUT',
-      headers: {
-        'X-Goog-Upload-Command': 'upload, finalize',
-        'X-Goog-Upload-Offset': '0',
-        'Content-Type': 'video/mp4',
-      },
-      body: videoBlob,
-    })
-
-    if (!uploadResponse.ok) {
-      log('warn', `Gemini file upload failed: ${uploadResponse.status}`)
-      return null
-    }
-
-    const uploadResult = await uploadResponse.json()
-    const fileUri = uploadResult.file?.uri
-    if (!fileUri) {
-      log('warn', 'No file URI in upload response')
-      return null
-    }
-
-    // Wait for file to be processed (ACTIVE state)
-    const fileName = uploadResult.file?.name
-    for (let i = 0; i < 20; i++) {
-      const statusRes = await fetch(
-        `https://generativelanguage.googleapis.com/v1beta/${fileName}?key=${geminiKey}`
-      )
-      const statusData = await statusRes.json()
-      if (statusData.state === 'ACTIVE') return fileUri
-      if (statusData.state === 'FAILED') return null
-      await new Promise((r) => setTimeout(r, 2000))
-    }
-
-    return fileUri
-  } catch (err) {
-    log('warn', `Gemini file upload error: ${err}`)
-    return null
-  }
-}
-
-const GEMINI_VIDEO_PROMPT = `Você é um editor de vídeo profissional analisando um Reel do Instagram. Analise CADA SEGUNDO deste vídeo com atenção máxima.
-
-IMPORTANTE: Mesmo vídeos simples de "talking head" possuem elementos de edição. Considere:
-- Jump cuts entre frases = transição do tipo "jump_cut"
-- Zoom in/out durante a fala = transição do tipo "zoom"
-- Qualquer mudança de enquadramento = transição
-- Música de fundo (mesmo baixa) = segmento de música
-- Legendas/texto aparecendo na tela = text overlay
-- Mudança de cenário ou ângulo = b-roll ou corte
-- Sons de "whoosh", "pop", "ding" = efeitos sonoros
-- Silêncios estratégicos = devem ser registrados
-
-Retorne APENAS um JSON válido (sem markdown, sem backticks, sem explicação) com esta estrutura exata:
-
-{
-  "transitions": [
-    {
-      "timestamp": 3,
-      "type": "jump_cut|fade|zoom_in|zoom_out|swipe|match_cut|speed_ramp|whip_pan|hard_cut",
-      "description": "Descrição curta do que acontece visualmente"
-    }
-  ],
-  "music_segments": [
-    {
-      "start_ts": 0,
-      "end_ts": 45,
-      "mood": "energético|calmo|tenso|inspirador|dramático",
-      "energy_level": "baixo|médio|alto",
-      "genre": "lo-fi|trap|pop|eletrônica|acústico|sem música",
-      "description": "Descrição da música/som de fundo"
-    }
-  ],
-  "sound_effects": [
-    {
-      "timestamp": 5,
-      "type": "whoosh|ding|pop|click|boom|notification|riser|drop",
-      "description": "Descrição do efeito e contexto de uso"
-    }
-  ],
-  "broll_segments": [
-    {
-      "start_ts": 8,
-      "end_ts": 11,
-      "description": "O que aparece no b-roll",
-      "visual_type": "screencast|footage|gráfico|imagem_estática|animação"
-    }
-  ],
-  "text_overlays": [
-    {
-      "start_ts": 0,
-      "end_ts": 3,
-      "text": "Texto exato que aparece na tela",
-      "style": "bold_grande|subtítulo|legenda_animada|bullet_point|número|emoji",
-      "position": "topo|centro|base|lateral"
-    }
-  ],
-  "visual_effects": [
-    {
-      "start_ts": 0,
-      "end_ts": 2,
-      "type": "zoom_dinâmico|shake|slow_motion|speed_ramp|filtro_cor|blur|split_screen",
-      "description": "Descrição do efeito"
-    }
-  ]
-}
-
-TODOS os timestamps devem ser números em segundos (não strings).
-Se alguma categoria não tiver elementos, retorne array vazio []. Mas ANALISE COM CUIDADO — a maioria dos Reels tem pelo menos transições (jump cuts) e texto na tela (legendas).`
-
-function parseGeminiResponse(responseText: string): EditingElements {
-  // Remove markdown code fences
-  let cleaned = responseText
-    .replace(/```json\s*/gi, '')
-    .replace(/```\s*/g, '')
-    .trim()
-
-  // Try to extract JSON object from response
-  const jsonMatch = cleaned.match(/\{[\s\S]*\}/)
-  if (jsonMatch) {
-    cleaned = jsonMatch[0]
-  }
-
-  // Remove trailing commas before } or ]
-  cleaned = cleaned.replace(/,\s*([}\]])/g, '$1')
-
-  try {
-    const parsed = JSON.parse(cleaned)
-
-    return {
-      transitions: Array.isArray(parsed.transitions) ? parsed.transitions : [],
-      music_segments: Array.isArray(parsed.music_segments) ? parsed.music_segments : [],
-      sound_effects: Array.isArray(parsed.sound_effects) ? parsed.sound_effects : [],
-      broll_segments: Array.isArray(parsed.broll_segments) ? parsed.broll_segments : [],
-      text_overlays: Array.isArray(parsed.text_overlays) ? parsed.text_overlays : [],
-      visual_effects: Array.isArray(parsed.visual_effects) ? parsed.visual_effects : [],
-    }
-  } catch (e) {
-    log('error', 'Failed to parse Gemini response', {
-      error: String(e),
-      raw: responseText.slice(0, 1000),
-    })
-    return {
-      transitions: [],
-      music_segments: [],
-      sound_effects: [],
-      broll_segments: [],
-      text_overlays: [],
-      visual_effects: [],
-    }
-  }
-}
-
-async function analyzeVideoWithGemini(
-  videoUrl: string,
-  geminiKey: string
-): Promise<EditingElements> {
-  // Try Files API first (faster for large videos)
-  const fileUri = await uploadToGeminiFiles(videoUrl, geminiKey)
-
-  let contentParts
-  if (fileUri) {
-    contentParts = [{ fileData: { mimeType: 'video/mp4', fileUri } }, { text: GEMINI_VIDEO_PROMPT }]
-  } else {
-    // Fallback: skip video analysis, return empty
-    log('info', 'Skipping Gemini visual analysis (no file URI)')
-    return {
-      transitions: [],
-      music_segments: [],
-      sound_effects: [],
-      broll_segments: [],
-      text_overlays: [],
-      visual_effects: [],
-    }
-  }
-
-  const response = await fetchWithRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${geminiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: contentParts }],
-        generationConfig: {
-          temperature: 0.2,
-          maxOutputTokens: 8192,
-          thinkingConfig: { thinkingBudget: 0 },
-        },
-      }),
-    }
-  )
-
-  if (!response.ok) {
-    const errText = await response.text()
-    log('warn', `Gemini API failed (${response.status}): ${errText.slice(0, 300)}`)
-    return {
-      transitions: [],
-      music_segments: [],
-      sound_effects: [],
-      broll_segments: [],
-      text_overlays: [],
-      visual_effects: [],
-    }
-  }
-
-  const result = await response.json()
-  const textContent = result.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
-
-  return parseGeminiResponse(textContent)
-}
-
-const STRUCTURE_PROMPT = `Analise esta transcrição de um Instagram Reel e a análise visual, e identifique a estrutura narrativa.
+const STRUCTURE_PROMPT = `Analise esta transcrição de um Instagram Reel e identifique a estrutura narrativa.
 
 TRANSCRIÇÃO:
 {transcription}
-
-ANÁLISE VISUAL:
-{visual}
 
 Retorne APENAS um JSON válido com esta estrutura:
 {
@@ -381,13 +140,10 @@ function extractResponsesText(result: Record<string, unknown>): string {
 
 async function analyzeStructureWithOpenAI(
   transcription: string,
-  visualAnalysis: EditingElements,
   openaiKey: string,
   modelId: string
 ): Promise<Record<string, unknown>> {
-  const prompt = STRUCTURE_PROMPT
-    .replace('{transcription}', transcription)
-    .replace('{visual}', JSON.stringify(visualAnalysis, null, 2))
+  const prompt = STRUCTURE_PROMPT.replace('{transcription}', transcription)
 
   if (isReasoningModel(modelId)) {
     const response = await fetchWithRetry('https://api.openai.com/v1/responses', {
@@ -441,58 +197,11 @@ async function analyzeStructureWithOpenAI(
   }
 }
 
-async function analyzeStructureWithGemini(
-  transcription: string,
-  visualAnalysis: EditingElements,
-  geminiKey: string,
-  modelId: string
-): Promise<Record<string, unknown>> {
-  const prompt = STRUCTURE_PROMPT
-    .replace('{transcription}', transcription)
-    .replace('{visual}', JSON.stringify(visualAnalysis, null, 2))
-
-  const generationConfig: Record<string, unknown> = {
-    temperature: 0.3,
-    maxOutputTokens: 4096,
-    responseMimeType: 'application/json',
-  }
-  if (/^gemini-2\.5/i.test(modelId)) {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 }
-  }
-
-  const response = await fetchWithRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig,
-      }),
-    }
-  )
-
-  if (!response.ok) {
-    throw new Error(`Gemini API failed (${response.status}): ${await response.text()}`)
-  }
-
-  const result = await response.json()
-  const text = result.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
-  try {
-    const jsonMatch = text.match(/\{[\s\S]*\}/)
-    return jsonMatch ? JSON.parse(jsonMatch[0]) : {}
-  } catch {
-    return {}
-  }
-}
-
 async function analyzeOneReel(
   supabase: SupabaseClient,
   reelId: string,
-  modelProvider: 'openai' | 'gemini',
   modelId: string,
-  openaiKey: string,
-  geminiKey: string
+  openaiKey: string
 ) {
   const { data: reel, error: reelError } = await supabase
     .from('reels')
@@ -539,68 +248,28 @@ async function analyzeOneReel(
     { onConflict: 'reel_id' }
   )
 
-  // 2. Analyze video visually with Gemini
-  log('info', 'Starting Gemini video analysis', { reelId })
-  let visualAnalysis: EditingElements
-  let editingStatus: 'completed' | 'failed' = 'completed'
+  // 2. Analyze structure with OpenAI (text-only)
+  log('info', `Starting structure analysis with openai/${modelId}`, { reelId })
+  const structureAnalysis = await analyzeStructureWithOpenAI(
+    whisperResult.full_text, openaiKey, modelId
+  )
 
-  try {
-    visualAnalysis = await analyzeVideoWithGemini(videoUrl, geminiKey)
-
-    // Check if we got any meaningful data
-    const hasData = visualAnalysis.transitions.length > 0 ||
-      visualAnalysis.music_segments.length > 0 ||
-      visualAnalysis.sound_effects.length > 0 ||
-      visualAnalysis.broll_segments.length > 0 ||
-      visualAnalysis.text_overlays.length > 0 ||
-      visualAnalysis.visual_effects.length > 0
-
-    if (!hasData) {
-      log('warn', 'Gemini returned no editing elements', { reelId })
-    }
-  } catch (err) {
-    log('warn', `Gemini visual analysis failed: ${err}`, { reelId })
-    editingStatus = 'failed'
-    visualAnalysis = {
-      transitions: [],
-      music_segments: [],
-      sound_effects: [],
-      broll_segments: [],
-      text_overlays: [],
-      visual_effects: [],
-    }
-  }
-
-  // 3. Analyze structure with selected model
-  log('info', `Starting structure analysis with ${modelProvider}/${modelId}`, { reelId })
-  let structureAnalysis: Record<string, unknown>
-
-  if (modelProvider === 'openai') {
-    structureAnalysis = await analyzeStructureWithOpenAI(
-      whisperResult.full_text, visualAnalysis, openaiKey, modelId
-    )
-  } else {
-    structureAnalysis = await analyzeStructureWithGemini(
-      whisperResult.full_text, visualAnalysis, geminiKey, modelId
-    )
-  }
-
-  // 4. Save content analysis
+  // 3. Save content analysis. Visual editing elements ficam vazios
+  // (sem mais análise visual de vídeo neste pipeline).
   await supabase.from('content_analyses').upsert({
     reel_id: reelId,
     hook: structureAnalysis.hook ?? { text: '', start_ts: 0, end_ts: 3, type: 'unknown', effectiveness_score: 5 },
     development: structureAnalysis.development ?? { text: '', start_ts: 3, end_ts: 20, key_points: [], storytelling_technique: 'unknown' },
     cta: structureAnalysis.cta ?? { text: '', start_ts: 20, end_ts: 30, type: 'unknown', strength_score: 5 },
-    transitions: visualAnalysis.transitions,
-    music_segments: visualAnalysis.music_segments,
-    sound_effects: visualAnalysis.sound_effects,
-    broll_segments: visualAnalysis.broll_segments,
-    text_overlays: visualAnalysis.text_overlays,
-    visual_effects: visualAnalysis.visual_effects,
+    transitions: EMPTY_EDITING_ELEMENTS.transitions,
+    music_segments: EMPTY_EDITING_ELEMENTS.music_segments,
+    sound_effects: EMPTY_EDITING_ELEMENTS.sound_effects,
+    broll_segments: EMPTY_EDITING_ELEMENTS.broll_segments,
+    text_overlays: EMPTY_EDITING_ELEMENTS.text_overlays,
+    visual_effects: EMPTY_EDITING_ELEMENTS.visual_effects,
     viral_patterns: structureAnalysis.viral_patterns ?? {},
-    editing_analysis_status: editingStatus,
-    gemini_model: 'gemini-2.5-flash',
-    claude_model: `${modelProvider}/${modelId}`,
+    editing_analysis_status: 'completed',
+    claude_model: `openai/${modelId}`,
     analyzed_at: new Date().toISOString(),
   }, { onConflict: 'reel_id' })
 }
@@ -609,26 +278,35 @@ async function processInBackground(
   supabase: SupabaseClient,
   jobId: string,
   reelIds: string[],
-  userId: string,
-  modelProvider: 'openai' | 'gemini',
+  _userId: string,
   modelId: string,
-  openaiKey: string,
-  geminiKey: string
+  openaiKey: string
 ) {
-  try {
-    const total = reelIds.length
-    let processed = 0
-    let cancelled = false
-    const CONCURRENCY = 3
+  const total = reelIds.length
+  let processed = 0
+  let cancelled = false
+  let timedOut = false
+  const CONCURRENCY = 3
 
+  // Wall-clock timer pro job inteiro. Defesa contra reels que travam
+  // mesmo com per-reel timeout (ex: vários reels lentos em série).
+  // Quando dispara: sinaliza cancelled e força finalização com os reels
+  // que já foram processados.
+  const overallTimer = setTimeout(() => {
+    timedOut = true
+    cancelled = true
+    log('warn', `Job ${jobId} hit overall wall-clock timeout of ${OVERALL_JOB_TIMEOUT_MS}ms — finalizing with partial results`)
+  }, OVERALL_JOB_TIMEOUT_MS)
+
+  try {
     async function processOne(reelId: string) {
       if (cancelled) return
       log('info', `Analyzing reel ${reelId}`, { jobId })
 
       try {
         const result = await Promise.race([
-          analyzeOneReel(supabase, reelId, modelProvider, modelId, openaiKey, geminiKey),
-          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), 180_000)),
+          analyzeOneReel(supabase, reelId, modelId, openaiKey),
+          new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), PER_REEL_TIMEOUT_MS)),
         ])
 
         if (result === 'timeout') {
@@ -670,9 +348,33 @@ async function processInBackground(
     })
     await Promise.all(workers)
 
+    // Marca reels não-processados (que ficaram na queue por timeout/cancelamento)
+    // como failed pra eles não ficarem em status 'processing' eternamente.
+    if (queue.length > 0) {
+      log('warn', `${queue.length} reels não processados serão marcados como failed`, { jobId })
+      for (const remainingReelId of queue) {
+        await supabase.from('content_analyses').upsert({
+          reel_id: remainingReelId,
+          hook: { text: '', start_ts: 0, end_ts: 0, type: 'timeout', effectiveness_score: 0 },
+          development: { text: '', start_ts: 0, end_ts: 0, key_points: [], storytelling_technique: 'timeout' },
+          cta: { text: '', start_ts: 0, end_ts: 0, type: 'timeout', strength_score: 0 },
+          editing_analysis_status: 'failed',
+        }, { onConflict: 'reel_id' })
+      }
+    }
+
+    const finalProgress = Math.round((processed / total) * 100)
     await supabase.from('processing_jobs').update({
-      status: 'completed', progress: 100,
-      output_data: { reels_analyzed: processed, model: `${modelProvider}/${modelId}` },
+      status: 'completed',
+      progress: finalProgress,
+      output_data: {
+        reels_analyzed: processed,
+        reels_total: total,
+        reels_skipped: total - processed,
+        model: `openai/${modelId}`,
+        partial: timedOut || processed < total,
+        timeout_reason: timedOut ? 'overall_wall_clock_10min' : null,
+      },
       completed_at: new Date().toISOString(),
     }).eq('id', jobId).in('status', ['pending', 'processing'])
   } catch (error) {
@@ -681,6 +383,8 @@ async function processInBackground(
     await supabase.from('processing_jobs').update({
       status: 'failed', error_message: errorMessage, completed_at: new Date().toISOString(),
     }).eq('id', jobId).in('status', ['pending', 'processing'])
+  } finally {
+    clearTimeout(overallTimer)
   }
 }
 
@@ -696,13 +400,11 @@ serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
     const openaiKey = await getCredential('openai_api_key')
-    const geminiKey = await getCredential('gemini_api_key')
 
     const missing: string[] = []
     if (!supabaseUrl) missing.push('SUPABASE_URL')
     if (!supabaseServiceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY')
     if (!openaiKey) missing.push('openai_api_key (configure em /setup ou /settings)')
-    if (!geminiKey) missing.push('gemini_api_key (configure em /setup ou /settings)')
     if (missing.length > 0) {
       return new Response(
         JSON.stringify({
@@ -715,7 +417,7 @@ serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
     const body: AnalyzeRequest & { profile_id?: string } = await req.json()
-    const { reel_ids, user_id, profile_id, model_provider = 'openai', model_id = 'gpt-4.1' } = body
+    const { reel_ids, user_id, profile_id, model_id = 'gpt-4.1' } = body
 
     if (!reel_ids || !Array.isArray(reel_ids) || reel_ids.length === 0) {
       return new Response(JSON.stringify({ error: 'reel_ids must be a non-empty array' }), {
@@ -732,7 +434,7 @@ serve(async (req: Request) => {
       .from('processing_jobs')
       .insert({
         user_id, job_type: 'analyze', status: 'processing', progress: 0,
-        input_data: { reel_ids, profile_id, model_provider, model_id },
+        input_data: { reel_ids, profile_id, model_provider: 'openai', model_id },
         started_at: new Date().toISOString(),
       })
       .select('id').single()
@@ -740,7 +442,7 @@ serve(async (req: Request) => {
     if (jobError || !job) throw new Error(`Failed to create job: ${jobError?.message}`)
 
     const backgroundTask = processInBackground(
-      supabase, job.id, reel_ids, user_id, model_provider, model_id, openaiKey, geminiKey
+      supabase, job.id, reel_ids, user_id, model_id, openaiKey
     )
 
     try {

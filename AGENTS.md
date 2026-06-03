@@ -1,4 +1,4 @@
-# CLAUDE.md — Creator OS
+# AGENTS.md — Creator OS
 
 > Ferramenta interna da Agentise para análise de conteúdo viral do Instagram, extração de padrões de viralização, e geração de roteiros personalizados com tom de fala do criador + relatório de edição para o editor de vídeo.
 
@@ -64,13 +64,13 @@
     │
     ├── Para os vídeos do PRÓPRIO perfil:
     │   ├── Whisper API → Transcrição completa
-    │   ├── OpenAI GPT → Extração do "tom de fala" (vocabulário, ritmo, expressões, estilo)
+    │   ├── Codex API → Extração do "tom de fala" (vocabulário, ritmo, expressões, estilo)
     │   └── Gera "Voice Profile" (documento de referência do tom)
     │
     ▼
 [Supabase Edge Function: generate-scripts]
     │
-    ├── Claude API recebe:
+    ├── Codex API recebe:
     │   ├── Padrões de viralização extraídos (hooks, estruturas, CTAs que funcionam)
     │   ├── Voice Profile do criador
     │   ├── Tema/assunto desejado (input do usuário)
@@ -221,7 +221,7 @@ CREATE TABLE scripts (
   editing_report JSONB NOT NULL,     -- guia completo para o editor
   
   -- Metadados
-  generation_model TEXT DEFAULT 'claude-sonnet',
+  generation_model TEXT DEFAULT 'Codex-sonnet',
   viral_patterns_used JSONB,        -- quais padrões foram aplicados
   status TEXT DEFAULT 'draft' CHECK (status IN ('draft', 'approved', 'recorded', 'published')),
   created_at TIMESTAMPTZ DEFAULT NOW(),
@@ -442,7 +442,7 @@ JSON estruturado com instruções para o editor de vídeo:
 }
 ```
 
-**Modelo:** `claude-sonnet-4-20250514`
+**Modelo:** `Codex-sonnet-4-20250514`
 
 **Variáveis de ambiente:**
 ```
@@ -699,7 +699,7 @@ O projeto deve ser implementado em **5 módulos sequenciais**, cada um entregand
 - Branch principal: `main`
 - Branches de feature: `module-N/descricao`
 - Commits em português, prefixados: `feat:`, `fix:`, `refactor:`, `docs:`
-- CLAUDE.md sempre atualizado a cada módulo
+- AGENTS.md sempre atualizado a cada módulo
 
 ---
 

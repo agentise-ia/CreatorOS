@@ -40,9 +40,7 @@ A aplicação é single-tenant por instância (`auth.uid() = user_id` em todas a
     │
     ├── Para cada Reel viral:
     │   ├── Whisper API → transcrição word-level com timestamps
-    │   ├── Gemini API (vídeo) → análise visual (cortes, transições, b-rolls)
-    │   ├── Gemini API (áudio) → música, efeitos sonoros, silêncios
-    │   ├── Claude/OpenAI → análise estrutural (hook, dev, CTA, padrões)
+    │   ├── OpenAI → análise estrutural (hook, dev, CTA, padrões) a partir do texto
     │   └── Consolida em JSON estruturado em content_analyses
     │
     ▼
@@ -79,8 +77,7 @@ A aplicação é single-tenant por instância (`auth.uid() = user_id` em todas a
 | Hosting frontend | Vercel |
 | Scraping | Apify Instagram Reel Scraper |
 | Transcrição | OpenAI Whisper (word-level timestamps) |
-| Análise visual | Google Gemini (vídeo nativo) |
-| Geração de roteiros | Claude (Sonnet) e/ou OpenAI |
+| Geração de roteiros | OpenAI (GPT-4.1 / GPT-4o) |
 | Fila de jobs | Tabela `processing_jobs` + Supabase Realtime (sem polling) |
 | Auth | Supabase Auth (email/senha) — primeiro signup vira admin via trigger |
 
@@ -116,11 +113,10 @@ Detalhes de SQL ficam nas migrations em `supabase/migrations/`. Ordem atual:
 |---|---|---|---|
 | **Apify** | Scraping de perfis e Reels | `apify/instagram-reel-scraper` | ~$2.60 / 1.000 resultados |
 | **OpenAI Whisper** | Transcrição de áudio com timestamps por palavra | `whisper-1`, `verbose_json`, `timestamp_granularities=word` | ~$0.006 / minuto |
-| **Google Gemini** | Análise visual de vídeo (cortes, b-rolls, texto na tela, áudio) | `gemini-2.5-flash` (custo) ou `gemini-2.5-pro` (qualidade) | ~$0.0075 / vídeo |
-| **Anthropic Claude** | Análise estrutural narrativa, geração de roteiros, voice profile | `claude-sonnet-4-20250514` (ou equivalente) | ~$0.03 / análise |
+| **OpenAI GPT** | Análise estrutural narrativa, geração de roteiros, voice profile | `gpt-4.1` ou `gpt-4o` | ~$0.03 / análise |
 
-**Custo médio por Reel analisado:** ~$0.40–0.80 (varia com duração do vídeo).
-**Custo médio por perfil completo (50 Reels):** ~$2.50–4.00.
+**Custo médio por Reel analisado:** ~$0.35–0.70 (varia com duração do vídeo).
+**Custo médio por perfil completo (50 Reels):** ~$2.00–3.50.
 
 URLs de vídeo retornadas pelo Apify expiram em **3 dias** — o Edge Function `scrape-profiles` baixa imediatamente para Supabase Storage.
 
@@ -134,7 +130,7 @@ Todas em Deno, em `supabase/functions/`. Padrão consistente: validação JWT do
 |---|---|
 | `scrape-profiles` | Recebe lista de `@usernames`, chama Apify, persiste `reels` e baixa vídeos para Storage. |
 | `scrape-reel-url` | Variante para um Reel avulso a partir de URL. |
-| `analyze-content` | Pipeline `Whisper → Gemini → Claude/OpenAI` para gerar `transcriptions` + `content_analyses`. |
+| `analyze-content` | Pipeline `Whisper → OpenAI` (texto) para gerar `transcriptions` + `content_analyses`. Sem análise visual de vídeo. |
 | `generate-voice-profile` | Consolida transcrições do próprio perfil em um `voice_profiles` (vocabulário, ritmo, expressões). |
 | `generate-script` | Combina Voice Profile + padrões virais + tema → `scripts` (teleprompter + relatório de edição). |
 | `job-status` | Leitura utilitária de `processing_jobs` (complementa o Realtime). |
@@ -208,11 +204,11 @@ src/
 - **API keys em env vars das Edge Functions.** O frontend nunca tem acesso direto. Inputs visíveis em `SettingsPage` são read-only (apenas referência).
 - **Apify URLs expiram em 3 dias.** Vídeos são baixados imediatamente para Supabase Storage após scraping.
 - **Whisper limite 25MB por arquivo.** Reels do Instagram costumam ficar dentro do limite; se exceder, comprimir com ffmpeg antes do upload.
-- **Gemini < 2.5: 1 vídeo por request.** Processamento sequencial.
+- **Sem análise visual de vídeo.** O pipeline `analyze-content` opera só sobre a transcrição. Os campos visuais de `content_analyses` (`transitions`, `broll_segments`, `text_overlays`, etc.) ficam vazios.
 - **Edge Functions têm timeout.** Por isso o padrão async é obrigatório para qualquer pipeline pesado.
 - **Engagement score é heurística.** `likes + comments*3 + shares*5`. Shares pesam 5x porque correlacionam melhor com viralidade. Ajuste os pesos na coluna gerada de `reels` se quiser.
 - **Voice Profile melhora com mais vídeos.** Mínimo recomendado: 5 vídeos do próprio perfil.
-- **Custos.** Análise completa por Reel: ~$0.40–0.80. Perfil de 50 Reels: ~$2.50–4.00.
+- **Custos.** Análise completa por Reel: ~$0.35–0.70. Perfil de 50 Reels: ~$2.00–3.50.
 
 ---
 

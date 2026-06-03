@@ -91,7 +91,7 @@ PRs com `npm run build` quebrado ou erros de tipo serão rejeitados.
 
 ### Edge Functions (Deno)
 - TypeScript estrito.
-- `try/catch` em toda chamada externa (Apify, OpenAI, Gemini, Claude).
+- `try/catch` em toda chamada externa (Apify, OpenAI).
 - Logs estruturados em JSON: `console.log(JSON.stringify({ ... }))`.
 - Retry com exponential backoff (3 tentativas) em chamadas a APIs externas.
 - Circuit breaker: 3 falhas seguidas → marcar `processing_jobs.status = 'failed'` com `error_message` detalhado.

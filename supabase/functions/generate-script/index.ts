@@ -9,6 +9,8 @@ const CORS_HEADERS = {
 }
 
 const MAX_RETRIES = 3
+const FETCH_TIMEOUT_MS = 90_000
+const OVERALL_JOB_TIMEOUT_MS = 600_000 // 10 min wall-clock pro job inteiro
 
 interface GenerateScriptRequest {
   topic: string
@@ -16,7 +18,7 @@ interface GenerateScriptRequest {
   reference_reel_ids?: string[]
   additional_instructions?: string
   user_id: string
-  model_provider: 'openai' | 'gemini'
+  model_provider: 'openai'
   model_id: string
 }
 
@@ -31,8 +33,9 @@ async function fetchWithRetry(
 ): Promise<Response> {
   let lastError: Error | null = null
   for (let attempt = 1; attempt <= retries; attempt++) {
+    const signal = options.signal ?? AbortSignal.timeout(FETCH_TIMEOUT_MS)
     try {
-      const response = await fetch(url, options)
+      const response = await fetch(url, { ...options, signal })
       if (response.ok || response.status < 500) return response
       lastError = new Error(`HTTP ${response.status}: ${await response.text()}`)
     } catch (error) {
@@ -175,48 +178,44 @@ async function generateWithOpenAI(
   }
 }
 
-async function generateWithGemini(
-  prompt: string,
-  geminiKey: string,
-  modelId: string
-): Promise<Record<string, unknown>> {
-  const generationConfig: Record<string, unknown> = {
-    temperature: 0.7,
-    maxOutputTokens: 8192,
-    responseMimeType: 'application/json',
-  }
-  if (/^gemini-2\.5/i.test(modelId)) {
-    generationConfig.thinkingConfig = { thinkingBudget: 0 }
-  }
-
-  const response = await fetchWithRetry(
-    `https://generativelanguage.googleapis.com/v1beta/models/${modelId}:generateContent?key=${geminiKey}`,
-    {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({
-        contents: [{ parts: [{ text: prompt }] }],
-        generationConfig,
-      }),
-    }
-  )
-
-  if (!response.ok) throw new Error(`Gemini API failed (${response.status}): ${await response.text()}`)
-
-  const result = await response.json()
-  const text = result.candidates?.[0]?.content?.parts?.[0]?.text ?? '{}'
-  try { const m = text.match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : {} } catch { return {} }
-}
-
 async function processInBackground(
   supabase: SupabaseClient,
   jobId: string,
   params: GenerateScriptRequest,
-  openaiKey: string,
-  geminiKey: string
+  openaiKey: string
+) {
+  // Wall-clock 10-min defense para garantir que o job sempre finalize.
+  // Mesmo se o worker da Supabase não for morto e algo travar internamente,
+  // o job vira 'failed' em vez de ficar em 'processing' pra sempre.
+  let overallTimer: number | undefined
+  const overallTimeout = new Promise<never>((_, reject) => {
+    overallTimer = setTimeout(() => {
+      reject(new Error(`Job excedeu wall-clock timeout de ${OVERALL_JOB_TIMEOUT_MS}ms`))
+    }, OVERALL_JOB_TIMEOUT_MS) as unknown as number
+  })
+
+  try {
+    await Promise.race([overallTimeout, generateScriptCore(supabase, jobId, params, openaiKey)])
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error)
+    log('error', 'Script generation failed', { jobId, error: errorMessage })
+    await supabase.from('processing_jobs').update({
+      status: 'failed', error_message: errorMessage, completed_at: new Date().toISOString(),
+    }).eq('id', jobId).in('status', ['pending', 'processing'])
+  } finally {
+    if (overallTimer !== undefined) clearTimeout(overallTimer)
+  }
+}
+
+async function generateScriptCore(
+  supabase: SupabaseClient,
+  jobId: string,
+  params: GenerateScriptRequest,
+  openaiKey: string
 ) {
   try {
-    const { topic, voice_profile_id, reference_reel_ids, additional_instructions, user_id, model_provider, model_id } = params
+    const { topic, voice_profile_id, reference_reel_ids, additional_instructions, user_id, model_id } = params
+    const model_provider = 'openai' as const
 
     let voiceProfileDoc = ''
     if (voice_profile_id) {
@@ -258,12 +257,7 @@ async function processInBackground(
 
     const prompt = buildScriptPrompt(topic, voiceProfileDoc, viralPatternsSection, additional_instructions)
 
-    let scriptData: Record<string, unknown>
-    if (model_provider === 'openai') {
-      scriptData = await generateWithOpenAI(prompt, openaiKey, model_id)
-    } else {
-      scriptData = await generateWithGemini(prompt, geminiKey, model_id)
-    }
+    const scriptData = await generateWithOpenAI(prompt, openaiKey, model_id)
 
     await supabase.from('processing_jobs').update({ progress: 80 }).eq('id', jobId)
 
@@ -329,13 +323,11 @@ serve(async (req: Request) => {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
     const openaiKey = await getCredential('openai_api_key')
-    const geminiKey = await getCredential('gemini_api_key')
 
     const missing: string[] = []
     if (!supabaseUrl) missing.push('SUPABASE_URL')
     if (!supabaseServiceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY')
-    if (!openaiKey && !geminiKey)
-      missing.push('openai_api_key ou gemini_api_key (configure em /setup ou /settings)')
+    if (!openaiKey) missing.push('openai_api_key (configure em /setup ou /settings)')
     if (missing.length > 0) {
       return new Response(
         JSON.stringify({
@@ -348,7 +340,7 @@ serve(async (req: Request) => {
 
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
     const body: GenerateScriptRequest = await req.json()
-    const { topic, user_id, model_provider = 'openai', model_id = 'gpt-4.1' } = body
+    const { topic, user_id, model_id = 'gpt-4.1' } = body
 
     if (!topic || !user_id) {
       return new Response(JSON.stringify({ error: 'topic and user_id are required' }), {
@@ -356,21 +348,20 @@ serve(async (req: Request) => {
       })
     }
 
-    if (model_provider === 'openai' && !openaiKey) throw new Error('OPENAI_API_KEY not configured')
-    if (model_provider === 'gemini' && !geminiKey) throw new Error('GEMINI_API_KEY not configured')
+    if (!openaiKey) throw new Error('OPENAI_API_KEY not configured')
 
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
       .insert({
         user_id, job_type: 'generate_script', status: 'processing', progress: 0,
-        input_data: { topic, voice_profile_id: body.voice_profile_id, reference_reel_ids: body.reference_reel_ids, model_provider, model_id },
+        input_data: { topic, voice_profile_id: body.voice_profile_id, reference_reel_ids: body.reference_reel_ids, model_provider: 'openai', model_id },
         started_at: new Date().toISOString(),
       })
       .select('id').single()
 
     if (jobError || !job) throw new Error(`Failed to create job: ${jobError?.message}`)
 
-    const backgroundTask = processInBackground(supabase, job.id, body, openaiKey ?? '', geminiKey ?? '')
+    const backgroundTask = processInBackground(supabase, job.id, body, openaiKey)
 
     try {
       const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime

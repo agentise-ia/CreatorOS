@@ -78,13 +78,12 @@ export const useAppStore = create<AppState>()(
     }),
     {
       name: 'viralscript-settings',
-      version: 3,
+      version: 4,
       partialize: (state) => ({
         modelProvider: state.modelProvider,
         modelId: state.modelId,
       }),
       // Reset preference when persisted modelId is no longer in MODEL_OPTIONS
-      // (e.g. invalid model names like gpt-5.5 / gemini-3-flash from earlier builds)
       migrate: (persisted) => {
         const s = persisted as { modelProvider?: ModelProvider; modelId?: string }
         const valid = MODEL_OPTIONS.some(

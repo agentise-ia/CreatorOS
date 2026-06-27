@@ -12,14 +12,21 @@ const MAX_RETRIES = 3
 const FETCH_TIMEOUT_MS = 90_000
 const OVERALL_JOB_TIMEOUT_MS = 600_000 // 10 min wall-clock pro job inteiro
 
+type Provider = 'openai' | 'anthropic'
+
 interface GenerateScriptRequest {
   topic: string
   voice_profile_id?: string
   reference_reel_ids?: string[]
   additional_instructions?: string
   user_id: string
-  model_provider: 'openai'
+  model_provider: Provider
   model_id: string
+}
+
+interface ProviderKeys {
+  openai: string | null
+  anthropic: string | null
 }
 
 function log(level: string, message: string, data?: Record<string, unknown>) {
@@ -178,11 +185,62 @@ async function generateWithOpenAI(
   }
 }
 
+async function generateWithAnthropic(
+  prompt: string,
+  apiKey: string,
+  modelId: string
+): Promise<Record<string, unknown>> {
+  const response = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: modelId,
+      max_tokens: 4096,
+      messages: [
+        {
+          role: 'user',
+          content: `${prompt}\n\nResponda APENAS com o objeto JSON, sem texto antes ou depois, sem blocos de código markdown.`,
+        },
+      ],
+    }),
+  })
+
+  if (!response.ok) throw new Error(`Anthropic API failed (${response.status}): ${await response.text()}`)
+
+  const result = await response.json()
+  const blocks = Array.isArray(result.content) ? (result.content as Array<Record<string, unknown>>) : []
+  const text = blocks
+    .filter((c) => c.type === 'text' && typeof c.text === 'string')
+    .map((c) => c.text as string)
+    .join('') || '{}'
+  try { return JSON.parse(text) } catch {
+    const m = text.match(/\{[\s\S]*\}/); return m ? JSON.parse(m[0]) : {}
+  }
+}
+
+async function generate(
+  prompt: string,
+  provider: Provider,
+  keys: ProviderKeys,
+  modelId: string
+): Promise<Record<string, unknown>> {
+  if (provider === 'anthropic') {
+    if (!keys.anthropic) throw new Error('anthropic_api_key não configurada (Configurações Avançadas)')
+    return generateWithAnthropic(prompt, keys.anthropic, modelId)
+  }
+  if (!keys.openai) throw new Error('openai_api_key não configurada')
+  return generateWithOpenAI(prompt, keys.openai, modelId)
+}
+
 async function processInBackground(
   supabase: SupabaseClient,
   jobId: string,
   params: GenerateScriptRequest,
-  openaiKey: string
+  keys: ProviderKeys
 ) {
   // Wall-clock 10-min defense para garantir que o job sempre finalize.
   // Mesmo se o worker da Supabase não for morto e algo travar internamente,
@@ -195,7 +253,7 @@ async function processInBackground(
   })
 
   try {
-    await Promise.race([overallTimeout, generateScriptCore(supabase, jobId, params, openaiKey)])
+    await Promise.race([overallTimeout, generateScriptCore(supabase, jobId, params, keys)])
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     log('error', 'Script generation failed', { jobId, error: errorMessage })
@@ -211,11 +269,11 @@ async function generateScriptCore(
   supabase: SupabaseClient,
   jobId: string,
   params: GenerateScriptRequest,
-  openaiKey: string
+  keys: ProviderKeys
 ) {
   try {
     const { topic, voice_profile_id, reference_reel_ids, additional_instructions, user_id, model_id } = params
-    const model_provider = 'openai' as const
+    const model_provider: Provider = params.model_provider === 'anthropic' ? 'anthropic' : 'openai'
 
     let voiceProfileDoc = ''
     if (voice_profile_id) {
@@ -257,7 +315,7 @@ async function generateScriptCore(
 
     const prompt = buildScriptPrompt(topic, voiceProfileDoc, viralPatternsSection, additional_instructions)
 
-    const scriptData = await generateWithOpenAI(prompt, openaiKey, model_id)
+    const scriptData = await generate(prompt, model_provider, keys, model_id)
 
     await supabase.from('processing_jobs').update({ progress: 80 }).eq('id', jobId)
 
@@ -322,16 +380,18 @@ serve(async (req: Request) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    const openaiKey = await getCredential('openai_api_key')
+    const [openaiKey, anthropicKey] = await Promise.all([
+      getCredential('openai_api_key'),
+      getCredential('anthropic_api_key'),
+    ])
 
-    const missing: string[] = []
-    if (!supabaseUrl) missing.push('SUPABASE_URL')
-    if (!supabaseServiceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY')
-    if (!openaiKey) missing.push('openai_api_key (configure em /setup ou /settings)')
-    if (missing.length > 0) {
+    const supabaseEnvMissing: string[] = []
+    if (!supabaseUrl) supabaseEnvMissing.push('SUPABASE_URL')
+    if (!supabaseServiceKey) supabaseEnvMissing.push('SUPABASE_SERVICE_ROLE_KEY')
+    if (supabaseEnvMissing.length > 0) {
       return new Response(
         JSON.stringify({
-          error: `Credenciais ausentes: ${missing.join(', ')}.`,
+          error: `Credenciais ausentes: ${supabaseEnvMissing.join(', ')}.`,
           instrucao: 'Abra /setup ou /settings no app para configurar as APIs.',
         }),
         { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
@@ -341,6 +401,7 @@ serve(async (req: Request) => {
     const supabase = createClient(supabaseUrl, supabaseServiceKey)
     const body: GenerateScriptRequest = await req.json()
     const { topic, user_id, model_id = 'gpt-4.1' } = body
+    const provider: Provider = body.model_provider === 'anthropic' ? 'anthropic' : 'openai'
 
     if (!topic || !user_id) {
       return new Response(JSON.stringify({ error: 'topic and user_id are required' }), {
@@ -348,20 +409,36 @@ serve(async (req: Request) => {
       })
     }
 
-    if (!openaiKey) throw new Error('OPENAI_API_KEY not configured')
+    // Valida a chave do provider escolhido.
+    if (provider === 'anthropic' && !anthropicKey) {
+      return new Response(
+        JSON.stringify({
+          error: 'anthropic_api_key não configurada. Adicione-a em Configurações → Configurações Avançadas.',
+        }),
+        { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+      )
+    }
+    if (provider === 'openai' && !openaiKey) {
+      return new Response(
+        JSON.stringify({ error: 'openai_api_key não configurada (configure em /setup ou /settings).' }),
+        { status: 500, headers: { ...CORS_HEADERS, 'Content-Type': 'application/json' } }
+      )
+    }
+
+    const keys: ProviderKeys = { openai: openaiKey, anthropic: anthropicKey }
 
     const { data: job, error: jobError } = await supabase
       .from('processing_jobs')
       .insert({
         user_id, job_type: 'generate_script', status: 'processing', progress: 0,
-        input_data: { topic, voice_profile_id: body.voice_profile_id, reference_reel_ids: body.reference_reel_ids, model_provider: 'openai', model_id },
+        input_data: { topic, voice_profile_id: body.voice_profile_id, reference_reel_ids: body.reference_reel_ids, model_provider: provider, model_id },
         started_at: new Date().toISOString(),
       })
       .select('id').single()
 
     if (jobError || !job) throw new Error(`Failed to create job: ${jobError?.message}`)
 
-    const backgroundTask = processInBackground(supabase, job.id, body, openaiKey)
+    const backgroundTask = processInBackground(supabase, job.id, body, keys)
 
     try {
       const runtime = (globalThis as { EdgeRuntime?: { waitUntil?: (p: Promise<unknown>) => void } }).EdgeRuntime

@@ -10,6 +10,8 @@ import {
   Sparkles,
   History,
   RotateCcw,
+  Columns2,
+  Film,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -22,6 +24,7 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog'
 import { ModelSelector } from '@/components/shared/ModelSelector'
+import { VideoPlayer } from '@/components/analysis/VideoPlayer'
 import { useScript } from '@/hooks/useScripts'
 import { useScriptVersions } from '@/hooks/useScriptVersions'
 import { useAppStore } from '@/store'
@@ -31,8 +34,9 @@ import {
   generateScript,
   getJobStatus,
 } from '@/lib/api'
-import { formatDate } from '@/lib/utils'
+import { formatDate, formatNumber } from '@/lib/utils'
 import supabase from '@/lib/supabase'
+import type { Reel } from '@/types'
 
 const STATUS_LABELS: Record<string, { label: string; className: string }> = {
   draft: { label: 'Rascunho', className: 'bg-[rgba(59,130,246,0.15)] text-[#60A5FA] border border-[rgba(59,130,246,0.25)]' },
@@ -58,10 +62,52 @@ export default function ScriptDetailPage() {
   const [regenerating, setRegenerating] = useState(false)
   const [regenProgress, setRegenProgress] = useState(0)
   const [viewingVersion, setViewingVersion] = useState<string | null>(null)
+  const [compareOpen, setCompareOpen] = useState(false)
+  const [sourceOpen, setSourceOpen] = useState(false)
+  const [sourceReel, setSourceReel] = useState<Reel | null>(null)
+  const [sourceTranscript, setSourceTranscript] = useState<string | null>(null)
+  const [sourceLoading, setSourceLoading] = useState(false)
+
+  const sourceReelId = script?.reference_reel_ids?.[0] ?? null
 
   useEffect(() => {
     if (script) setEditedText(script.script_teleprompter)
   }, [script])
+
+  // Carrega o reel-fonte (vídeo + transcrição original) usado para gerar o roteiro.
+  useEffect(() => {
+    if (!sourceReelId) {
+      setSourceReel(null)
+      setSourceTranscript(null)
+      return
+    }
+    let cancelled = false
+    async function load() {
+      setSourceLoading(true)
+      const [{ data: reel }, { data: tr }] = await Promise.all([
+        supabase.from('reels').select('*').eq('id', sourceReelId).maybeSingle(),
+        supabase
+          .from('transcriptions')
+          .select('full_text')
+          .eq('reel_id', sourceReelId)
+          .maybeSingle(),
+      ])
+      if (cancelled) return
+      setSourceReel((reel as Reel) ?? null)
+      setSourceTranscript((tr as { full_text: string } | null)?.full_text ?? null)
+      setSourceLoading(false)
+    }
+    load()
+    return () => {
+      cancelled = true
+    }
+  }, [sourceReelId])
+
+  const sourceVideoSrc = sourceReel
+    ? sourceReel.storage_path
+      ? supabase.storage.from('videos').getPublicUrl(sourceReel.storage_path).data.publicUrl
+      : sourceReel.video_url
+    : null
 
   const hasUnsavedChanges = script ? editedText !== script.script_teleprompter : false
 
@@ -343,7 +389,19 @@ export default function ScriptDetailPage() {
           </div>
         </div>
 
-        <div className="flex gap-2">
+        <div className="flex flex-wrap gap-2">
+          {sourceReelId && (
+            <>
+              <Button variant="outline" size="sm" onClick={() => setCompareOpen(true)}>
+                <Columns2 className="size-3" />
+                Comparar
+              </Button>
+              <Button variant="outline" size="sm" onClick={() => setSourceOpen(true)}>
+                <Film className="size-3" />
+                Ver conteúdo fonte
+              </Button>
+            </>
+          )}
           <Button variant="outline" size="sm" onClick={() => setRegenOpen(true)} disabled={regenerating}>
             <Sparkles className="size-3" />
             {regenerating ? `Regenerando ${regenProgress}%` : 'Regenerar com IA'}
@@ -673,6 +731,96 @@ export default function ScriptDetailPage() {
                 <><Sparkles className="size-4" /> Regenerar</>
               )}
             </Button>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Comparar: transcrição original × roteiro gerado */}
+      <Dialog open={compareOpen} onOpenChange={setCompareOpen}>
+        <DialogContent className="max-w-4xl">
+          <DialogHeader>
+            <DialogTitle>Comparação — Original × Roteiro gerado</DialogTitle>
+          </DialogHeader>
+          <div className="grid gap-4 sm:grid-cols-2">
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-[rgba(59,130,246,0.15)] text-[#60A5FA] border border-[rgba(59,130,246,0.25)]">
+                  Transcrição original
+                </Badge>
+              </div>
+              <div className="max-h-[60vh] overflow-y-auto rounded-lg border border-[rgba(59,130,246,0.12)] bg-[rgba(59,130,246,0.04)] p-3">
+                {sourceLoading ? (
+                  <div className="flex justify-center py-8">
+                    <Loader2 className="size-5 animate-spin text-primary" />
+                  </div>
+                ) : sourceTranscript ? (
+                  <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+                    {sourceTranscript}
+                  </p>
+                ) : (
+                  <p className="text-xs text-muted-foreground">
+                    Transcrição do vídeo original não disponível.
+                  </p>
+                )}
+              </div>
+            </div>
+            <div className="space-y-2">
+              <div className="flex items-center gap-2">
+                <Badge className="bg-[rgba(16,185,129,0.15)] text-accent border border-[rgba(16,185,129,0.25)]">
+                  Seu roteiro
+                </Badge>
+              </div>
+              <div className="max-h-[60vh] overflow-y-auto rounded-lg border border-[rgba(16,185,129,0.15)] bg-[rgba(16,185,129,0.04)] p-3">
+                <p className="whitespace-pre-wrap text-xs leading-relaxed text-foreground">
+                  {script.script_teleprompter}
+                </p>
+              </div>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
+
+      {/* Ver conteúdo fonte: vídeo usado para gerar o roteiro */}
+      <Dialog open={sourceOpen} onOpenChange={setSourceOpen}>
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Conteúdo fonte</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-3">
+            {sourceLoading ? (
+              <div className="flex justify-center py-10">
+                <Loader2 className="size-6 animate-spin text-primary" />
+              </div>
+            ) : sourceReel ? (
+              <>
+                <div className="mx-auto max-w-[300px]">
+                  <VideoPlayer src={sourceVideoSrc} thumbnail={sourceReel.thumbnail_url} />
+                </div>
+                {sourceReel.caption && (
+                  <p className="line-clamp-3 text-xs text-muted-foreground">
+                    {sourceReel.caption}
+                  </p>
+                )}
+                <div className="flex flex-wrap gap-2 text-[10px] text-muted-foreground">
+                  <Badge variant="secondary">
+                    {formatNumber(sourceReel.likes_count)} curtidas
+                  </Badge>
+                  <Badge variant="secondary">
+                    {formatNumber(sourceReel.comments_count)} comentários
+                  </Badge>
+                  <Badge variant="secondary">
+                    {formatNumber(sourceReel.views_count)} views
+                  </Badge>
+                  <Badge variant="secondary">
+                    {formatNumber(sourceReel.engagement_score)} engagement
+                  </Badge>
+                </div>
+              </>
+            ) : (
+              <p className="text-sm text-muted-foreground">
+                Conteúdo fonte não encontrado (o reel pode ter sido removido).
+              </p>
+            )}
           </div>
         </DialogContent>
       </Dialog>

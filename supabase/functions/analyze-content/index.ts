@@ -13,10 +13,17 @@ const FETCH_TIMEOUT_MS = 90_000 // 90s por request (upload/download de vídeo + 
 const PER_REEL_TIMEOUT_MS = 150_000 // 2.5 min por reel
 const OVERALL_JOB_TIMEOUT_MS = 600_000 // 10 min wall-clock pro job inteiro
 
+type Provider = 'openai' | 'anthropic'
+
+interface ProviderKeys {
+  openai: string | null
+  anthropic: string | null
+}
+
 interface AnalyzeRequest {
   reel_ids: string[]
   user_id: string
-  model_provider: 'openai'
+  model_provider: Provider
   model_id: string
 }
 
@@ -138,13 +145,65 @@ function extractResponsesText(result: Record<string, unknown>): string {
   return text
 }
 
-async function analyzeStructureWithOpenAI(
+async function analyzeStructureWithAnthropic(
+  prompt: string,
+  apiKey: string,
+  modelId: string
+): Promise<Record<string, unknown>> {
+  const response = await fetchWithRetry('https://api.anthropic.com/v1/messages', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'x-api-key': apiKey,
+      'anthropic-version': '2023-06-01',
+    },
+    body: JSON.stringify({
+      model: modelId,
+      max_tokens: 2048,
+      messages: [
+        {
+          role: 'user',
+          content: `${prompt}\n\nResponda APENAS com o objeto JSON, sem texto antes ou depois, sem blocos markdown.`,
+        },
+      ],
+    }),
+  })
+  if (!response.ok) throw new Error(`Anthropic API failed (${response.status}): ${await response.text()}`)
+  const result = await response.json()
+  const blocks = Array.isArray(result.content) ? (result.content as Array<Record<string, unknown>>) : []
+  const text =
+    blocks
+      .filter((c) => c.type === 'text' && typeof c.text === 'string')
+      .map((c) => c.text as string)
+      .join('') || '{}'
+  try {
+    return JSON.parse(text)
+  } catch {
+    const jsonMatch = text.match(/\{[\s\S]*\}/)
+    return jsonMatch ? JSON.parse(jsonMatch[0]) : {}
+  }
+}
+
+async function analyzeStructure(
   transcription: string,
-  openaiKey: string,
+  provider: Provider,
+  keys: ProviderKeys,
   modelId: string
 ): Promise<Record<string, unknown>> {
   const prompt = STRUCTURE_PROMPT.replace('{transcription}', transcription)
+  if (provider === 'anthropic') {
+    if (!keys.anthropic) throw new Error('anthropic_api_key não configurada (Configurações Avançadas)')
+    return analyzeStructureWithAnthropic(prompt, keys.anthropic, modelId)
+  }
+  if (!keys.openai) throw new Error('openai_api_key não configurada')
+  return analyzeStructureWithOpenAI(prompt, keys.openai, modelId)
+}
 
+async function analyzeStructureWithOpenAI(
+  prompt: string,
+  openaiKey: string,
+  modelId: string
+): Promise<Record<string, unknown>> {
   if (isReasoningModel(modelId)) {
     const response = await fetchWithRetry('https://api.openai.com/v1/responses', {
       method: 'POST',
@@ -200,9 +259,11 @@ async function analyzeStructureWithOpenAI(
 async function analyzeOneReel(
   supabase: SupabaseClient,
   reelId: string,
-  modelId: string,
-  openaiKey: string
+  provider: Provider,
+  keys: ProviderKeys,
+  modelId: string
 ) {
+  const openaiKey = keys.openai ?? ''
   const { data: reel, error: reelError } = await supabase
     .from('reels')
     .select('*')
@@ -248,10 +309,10 @@ async function analyzeOneReel(
     { onConflict: 'reel_id' }
   )
 
-  // 2. Analyze structure with OpenAI (text-only)
-  log('info', `Starting structure analysis with openai/${modelId}`, { reelId })
-  const structureAnalysis = await analyzeStructureWithOpenAI(
-    whisperResult.full_text, openaiKey, modelId
+  // 2. Analyze structure with the selected provider (text-only)
+  log('info', `Starting structure analysis with ${provider}/${modelId}`, { reelId })
+  const structureAnalysis = await analyzeStructure(
+    whisperResult.full_text, provider, keys, modelId
   )
 
   // 3. Save content analysis. Visual editing elements ficam vazios
@@ -269,7 +330,7 @@ async function analyzeOneReel(
     visual_effects: EMPTY_EDITING_ELEMENTS.visual_effects,
     viral_patterns: structureAnalysis.viral_patterns ?? {},
     editing_analysis_status: 'completed',
-    claude_model: `openai/${modelId}`,
+    claude_model: `${provider}/${modelId}`,
     analyzed_at: new Date().toISOString(),
   }, { onConflict: 'reel_id' })
 }
@@ -279,8 +340,9 @@ async function processInBackground(
   jobId: string,
   reelIds: string[],
   _userId: string,
-  modelId: string,
-  openaiKey: string
+  provider: Provider,
+  keys: ProviderKeys,
+  modelId: string
 ) {
   const total = reelIds.length
   let processed = 0
@@ -305,7 +367,7 @@ async function processInBackground(
 
       try {
         const result = await Promise.race([
-          analyzeOneReel(supabase, reelId, modelId, openaiKey),
+          analyzeOneReel(supabase, reelId, provider, keys, modelId),
           new Promise<'timeout'>((resolve) => setTimeout(() => resolve('timeout'), PER_REEL_TIMEOUT_MS)),
         ])
 
@@ -371,7 +433,7 @@ async function processInBackground(
         reels_analyzed: processed,
         reels_total: total,
         reels_skipped: total - processed,
-        model: `openai/${modelId}`,
+        model: `${provider}/${modelId}`,
         partial: timedOut || processed < total,
         timeout_reason: timedOut ? 'overall_wall_clock_10min' : null,
       },
@@ -399,12 +461,24 @@ serve(async (req: Request) => {
   try {
     const supabaseUrl = Deno.env.get('SUPABASE_URL')
     const supabaseServiceKey = Deno.env.get('SUPABASE_SERVICE_ROLE_KEY')
-    const openaiKey = await getCredential('openai_api_key')
+    const [openaiKey, anthropicKey] = await Promise.all([
+      getCredential('openai_api_key'),
+      getCredential('anthropic_api_key'),
+    ])
 
+    const body: AnalyzeRequest & { profile_id?: string } = await req.json()
+    const { reel_ids, user_id, profile_id, model_id = 'gpt-4.1' } = body
+    const provider: Provider = body.model_provider === 'anthropic' ? 'anthropic' : 'openai'
+
+    // Whisper (transcrição) é sempre OpenAI — a chave openai é obrigatória mesmo
+    // quando o LLM de análise é Anthropic.
     const missing: string[] = []
     if (!supabaseUrl) missing.push('SUPABASE_URL')
     if (!supabaseServiceKey) missing.push('SUPABASE_SERVICE_ROLE_KEY')
     if (!openaiKey) missing.push('openai_api_key (configure em /setup ou /settings)')
+    if (provider === 'anthropic' && !anthropicKey) {
+      missing.push('anthropic_api_key (Configurações → Configurações Avançadas)')
+    }
     if (missing.length > 0) {
       return new Response(
         JSON.stringify({
@@ -415,9 +489,8 @@ serve(async (req: Request) => {
       )
     }
 
-    const supabase = createClient(supabaseUrl, supabaseServiceKey)
-    const body: AnalyzeRequest & { profile_id?: string } = await req.json()
-    const { reel_ids, user_id, profile_id, model_id = 'gpt-4.1' } = body
+    const supabase = createClient(supabaseUrl!, supabaseServiceKey!)
+    const keys: ProviderKeys = { openai: openaiKey, anthropic: anthropicKey }
 
     if (!reel_ids || !Array.isArray(reel_ids) || reel_ids.length === 0) {
       return new Response(JSON.stringify({ error: 'reel_ids must be a non-empty array' }), {
@@ -434,7 +507,7 @@ serve(async (req: Request) => {
       .from('processing_jobs')
       .insert({
         user_id, job_type: 'analyze', status: 'processing', progress: 0,
-        input_data: { reel_ids, profile_id, model_provider: 'openai', model_id },
+        input_data: { reel_ids, profile_id, model_provider: provider, model_id },
         started_at: new Date().toISOString(),
       })
       .select('id').single()
@@ -442,7 +515,7 @@ serve(async (req: Request) => {
     if (jobError || !job) throw new Error(`Failed to create job: ${jobError?.message}`)
 
     const backgroundTask = processInBackground(
-      supabase, job.id, reel_ids, user_id, model_id, openaiKey
+      supabase, job.id, reel_ids, user_id, provider, keys, model_id
     )
 
     try {

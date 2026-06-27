@@ -126,7 +126,14 @@ export default async function handler(req: VercelRequest, res: VercelResponse) {
     return res.status(400).json({ success: false, message: 'Body deve conter { credentials: { ... } }' })
   }
 
-  const manifest = new Map(setupConfig.appCredentials.map((c) => [c.key, c]))
+  // Manifesto = credenciais do wizard + as exclusivas de Configurações Avançadas
+  // (ex.: anthropic_api_key). Ambas são validadas/criptografadas igualmente.
+  const manifest = new Map(
+    [...setupConfig.appCredentials, ...(setupConfig.settingsOnlyCredentials ?? [])].map((c) => [
+      c.key,
+      c,
+    ]),
+  )
   const errors: Record<string, string> = {}
   const saved: string[] = []
 

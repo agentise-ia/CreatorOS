@@ -29,6 +29,12 @@ export type SetupConfig = {
   edgeFunctions: string[]
   /** credenciais específicas da ferramenta (Step 4 do wizard) */
   appCredentials: CredentialField[]
+  /**
+   * Credenciais que NÃO aparecem no wizard — só configuráveis dentro de
+   * Configurações Avançadas (ex.: chave da Anthropic). Mesma criptografia e
+   * validação server-side que appCredentials, porém fora do onboarding.
+   */
+  settingsOnlyCredentials?: CredentialField[]
   /** rota pra qual redirecionar após setup OK */
   postBootstrapRedirect: string
 }
@@ -44,6 +50,26 @@ async function validateOpenAI(value: string): Promise<ValidationResult> {
   try {
     const res = await fetch('https://api.openai.com/v1/models', {
       headers: { Authorization: `Bearer ${value}` },
+    })
+    if (res.status === 401) return { ok: false, message: 'Chave inválida (401)' }
+    if (!res.ok) return { ok: false, message: `Erro ${res.status} ao validar` }
+    return { ok: true }
+  } catch (err) {
+    return { ok: false, message: `Falha de rede: ${(err as Error).message}` }
+  }
+}
+
+async function validateAnthropic(value: string): Promise<ValidationResult> {
+  if (!value.startsWith('sk-ant-')) {
+    return { ok: false, message: 'Formato esperado: sk-ant-...' }
+  }
+  try {
+    // /v1/models exige o header de versão; 401 = chave inválida.
+    const res = await fetch('https://api.anthropic.com/v1/models', {
+      headers: {
+        'x-api-key': value,
+        'anthropic-version': '2023-06-01',
+      },
     })
     if (res.status === 401) return { ok: false, message: 'Chave inválida (401)' }
     if (!res.ok) return { ok: false, message: `Erro ${res.status} ao validar` }
@@ -107,6 +133,20 @@ export const setupConfig: SetupConfig = {
       docsUrl: 'https://platform.openai.com/api-keys',
       helpText: 'Usado por Whisper (transcrição) e GPT (análise/geração)',
       validate: validateOpenAI,
+    },
+  ],
+
+  // Não entram no wizard — só em Configurações Avançadas.
+  settingsOnlyCredentials: [
+    {
+      key: 'anthropic_api_key',
+      label: 'Anthropic API Key',
+      placeholder: 'sk-ant-...',
+      inputType: 'password',
+      optional: true,
+      docsUrl: 'https://console.anthropic.com/settings/keys',
+      helpText: 'Habilita os modelos Claude (Sonnet 4.6 e Opus 4.8) na geração de roteiros',
+      validate: validateAnthropic,
     },
   ],
 }

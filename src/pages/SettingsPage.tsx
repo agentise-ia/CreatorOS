@@ -1,11 +1,21 @@
 import { useEffect, useState } from 'react'
-import { Settings, Brain, ShieldCheck, KeyRound, CheckCircle2, Loader2 } from 'lucide-react'
+import {
+  Settings,
+  Brain,
+  ShieldCheck,
+  KeyRound,
+  CheckCircle2,
+  Loader2,
+  ChevronDown,
+  Sparkles,
+} from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
 import { Badge } from '@/components/ui/badge'
 import { ModelSelector } from '@/components/shared/ModelSelector'
 import { useAppStore } from '@/store'
 import { useAppUser } from '@/hooks/useAppUser'
+import { cn } from '@/lib/utils'
 import supabase from '@/lib/supabase'
 import { setupConfig } from '../../setup.config'
 
@@ -13,21 +23,26 @@ type SaveState = 'idle' | 'saving' | 'saved' | 'error'
 
 export default function SettingsPage() {
   const user = useAppStore((s) => s.user)
+  const anthropicEnabled = useAppStore((s) => s.anthropicEnabled)
+  const setAnthropicEnabled = useAppStore((s) => s.setAnthropicEnabled)
   const { isAdmin, appUser } = useAppUser()
 
   const fields = setupConfig.appCredentials
+  const advancedFields = setupConfig.settingsOnlyCredentials ?? []
+  const allFields = [...fields, ...advancedFields]
   const [values, setValues] = useState<Record<string, string>>(
-    Object.fromEntries(fields.map((f) => [f.key, ''])),
+    Object.fromEntries(allFields.map((f) => [f.key, ''])),
   )
   const [configured, setConfigured] = useState<Set<string>>(new Set())
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
+  const [advancedOpen, setAdvancedOpen] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     async function load() {
       try {
-        const keys = fields.map((f) => f.key)
+        const keys = allFields.map((f) => f.key)
         const {
           data: { session },
         } = await supabase.auth.getSession()
@@ -224,6 +239,126 @@ export default function SettingsPage() {
               </div>
             ))}
           </div>
+
+          {/* Configurações Avançadas — dropdown */}
+          {advancedFields.length > 0 && (
+            <div className="rounded-lg border border-[rgba(59,130,246,0.15)] bg-[rgba(255,255,255,0.02)]">
+              <button
+                type="button"
+                onClick={() => setAdvancedOpen((o) => !o)}
+                className="flex w-full items-center justify-between px-3 py-2.5 text-left"
+              >
+                <span className="flex items-center gap-2">
+                  <Sparkles className="size-3.5 text-primary" />
+                  <span className="text-sm font-medium text-foreground">
+                    Configurações Avançadas
+                  </span>
+                </span>
+                <ChevronDown
+                  className={cn(
+                    'size-4 text-muted-foreground transition-transform',
+                    advancedOpen && 'rotate-180',
+                  )}
+                />
+              </button>
+
+              {advancedOpen && (
+                <div className="space-y-4 border-t border-[rgba(59,130,246,0.12)] px-3 py-4">
+                  {advancedFields.map((f) => (
+                    <div key={f.key} className="space-y-1.5">
+                      <Label className="flex items-center justify-between text-xs text-[#CBD5E1]">
+                        <span>
+                          {f.label}{' '}
+                          <span className="font-mono text-[10px] text-muted-foreground">
+                            ({f.key})
+                          </span>
+                        </span>
+                        <span className="flex items-center gap-2">
+                          {configured.has(f.key) && (
+                            <span className="flex items-center gap-1 text-[10px] text-[#10B981]">
+                              <CheckCircle2 className="size-3" />
+                              configurada
+                            </span>
+                          )}
+                          {f.docsUrl && (
+                            <a
+                              href={f.docsUrl}
+                              target="_blank"
+                              rel="noreferrer"
+                              className="text-[10px] text-[#60A5FA] hover:underline"
+                            >
+                              onde gerar?
+                            </a>
+                          )}
+                        </span>
+                      </Label>
+                      <div className="flex gap-2">
+                        <input
+                          type={f.inputType === 'password' ? 'password' : 'text'}
+                          value={values[f.key] ?? ''}
+                          placeholder={
+                            configured.has(f.key)
+                              ? '(configurada — digite para substituir)'
+                              : (f.placeholder ?? '')
+                          }
+                          onChange={(e) =>
+                            setValues((prev) => ({ ...prev, [f.key]: e.target.value }))
+                          }
+                          className="flex-1 rounded-lg border border-[rgba(59,130,246,0.2)] bg-[rgba(255,255,255,0.03)] px-3 py-2 font-mono text-xs text-[#F8FAFC] outline-none transition-all focus:border-[#3B82F6] focus:shadow-[0_0_30px_rgba(59,130,246,0.3)]"
+                        />
+                        <button
+                          onClick={() => save(f.key)}
+                          disabled={!values[f.key]?.trim() || saveState === 'saving'}
+                          className="rounded-lg bg-gradient-to-br from-[#1E3A8A] to-[#3B82F6] px-3 py-2 text-xs font-medium text-white shadow-[0_0_20px_rgba(59,130,246,0.3)] transition-all duration-300 enabled:hover:shadow-[0_0_40px_rgba(59,130,246,0.5)] disabled:opacity-40 disabled:shadow-none"
+                        >
+                          {saveState === 'saving' ? (
+                            <Loader2 className="size-3 animate-spin" />
+                          ) : (
+                            'Salvar'
+                          )}
+                        </button>
+                      </div>
+                      {f.helpText && (
+                        <p className="text-[11px] text-muted-foreground">{f.helpText}</p>
+                      )}
+                    </div>
+                  ))}
+
+                  {/* Ativar Modelos de IA (Anthropic) */}
+                  <div className="flex items-start justify-between gap-3 rounded-lg border border-[rgba(59,130,246,0.12)] bg-[rgba(59,130,246,0.04)] p-3">
+                    <div className="min-w-0">
+                      <p className="text-xs font-medium text-foreground">
+                        Ativar Modelos de IA (Anthropic)
+                      </p>
+                      <p className="mt-0.5 text-[11px] text-muted-foreground">
+                        Quando ativado, os modelos Sonnet 4.6 e Opus 4.8 aparecem em
+                        "Modelo de IA". Requer a chave da Anthropic configurada acima.
+                      </p>
+                    </div>
+                    <button
+                      type="button"
+                      role="switch"
+                      aria-checked={anthropicEnabled}
+                      onClick={() => setAnthropicEnabled(!anthropicEnabled)}
+                      className={cn(
+                        'relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors',
+                        anthropicEnabled
+                          ? 'bg-[#3B82F6]'
+                          : 'bg-[rgba(148,163,184,0.3)]',
+                      )}
+                    >
+                      <span
+                        className={cn(
+                          'absolute top-0.5 size-4 rounded-full bg-white transition-transform',
+                          anthropicEnabled ? 'translate-x-4' : 'translate-x-0.5',
+                        )}
+                      />
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          )}
         </CardContent>
       </Card>
 

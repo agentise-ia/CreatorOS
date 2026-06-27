@@ -1,11 +1,20 @@
+import { useState } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { FileText, Plus, Loader2 } from 'lucide-react'
+import { FileText, Plus, Loader2, Trash2 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
+import {
+  Dialog,
+  DialogContent,
+  DialogHeader,
+  DialogTitle,
+} from '@/components/ui/dialog'
 import { useScripts } from '@/hooks/useScripts'
 import { useAppStore } from '@/store'
 import { formatDate } from '@/lib/utils'
+import supabase from '@/lib/supabase'
+import type { Script } from '@/types'
 
 const STATUS_LABELS: Record<string, { label: string; className: string }> = {
   draft: { label: 'Rascunho', className: 'bg-[rgba(59,130,246,0.15)] text-[#60A5FA] border border-[rgba(59,130,246,0.25)]' },
@@ -16,14 +25,36 @@ const STATUS_LABELS: Record<string, { label: string; className: string }> = {
 
 export default function ScriptsPage() {
   const navigate = useNavigate()
-  const { scripts, loading } = useScripts()
+  const { scripts, loading, refetch } = useScripts()
   const activeJobs = useAppStore((s) => s.activeJobs)
+
+  const [deleteTarget, setDeleteTarget] = useState<Script | null>(null)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const scriptJobs = activeJobs.filter(
     (j) =>
       j.job_type === 'generate_script' &&
       (j.status === 'pending' || j.status === 'processing')
   )
+
+  async function handleDelete() {
+    if (!deleteTarget) return
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      // Remove versões antes do roteiro (caso não haja ON DELETE CASCADE).
+      await supabase.from('script_versions').delete().eq('script_id', deleteTarget.id)
+      const { error } = await supabase.from('scripts').delete().eq('id', deleteTarget.id)
+      if (error) throw new Error(error.message)
+      setDeleteTarget(null)
+      await refetch()
+    } catch (err) {
+      setDeleteError((err as Error).message)
+    } finally {
+      setDeleting(false)
+    }
+  }
 
   if (loading) {
     return (
@@ -109,12 +140,69 @@ export default function ScriptsPage() {
                       {formatDate(script.created_at)}
                     </p>
                   </div>
+
+                  <Button
+                    variant="ghost"
+                    size="icon-xs"
+                    className="shrink-0 text-muted-foreground hover:text-destructive"
+                    aria-label="Excluir roteiro"
+                    onClick={(e) => {
+                      e.stopPropagation()
+                      setDeleteError(null)
+                      setDeleteTarget(script)
+                    }}
+                  >
+                    <Trash2 className="size-4" />
+                  </Button>
                 </CardContent>
               </Card>
             )
           })}
         </div>
       )}
+
+      {/* Confirmação de exclusão */}
+      <Dialog
+        open={!!deleteTarget}
+        onOpenChange={(open) => {
+          if (!open && !deleting) setDeleteTarget(null)
+        }}
+      >
+        <DialogContent>
+          <DialogHeader>
+            <DialogTitle>Excluir roteiro</DialogTitle>
+          </DialogHeader>
+          <div className="space-y-4">
+            <p className="text-sm text-muted-foreground">
+              Tem certeza que deseja excluir{' '}
+              <span className="font-medium text-foreground">{deleteTarget?.title}</span>? Esta
+              ação não pode ser desfeita e remove também o histórico de versões.
+            </p>
+            {deleteError && (
+              <p className="text-xs text-destructive">{deleteError}</p>
+            )}
+            <div className="flex justify-end gap-2">
+              <Button
+                variant="ghost"
+                size="sm"
+                onClick={() => setDeleteTarget(null)}
+                disabled={deleting}
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="sm"
+                className="bg-destructive text-white hover:bg-destructive/90"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting ? <Loader2 className="size-4 animate-spin" /> : <Trash2 className="size-4" />}
+                Excluir
+              </Button>
+            </div>
+          </div>
+        </DialogContent>
+      </Dialog>
     </div>
   )
 }

@@ -37,12 +37,26 @@ export default function NewScriptPage() {
   const [genError, setGenError] = useState<string | null>(null)
   const [viralReels, setViralReels] = useState<ReelWithAnalysis[]>([])
   const [loadingReels, setLoadingReels] = useState(true)
+  const [profileFilter, setProfileFilter] = useState<string>('all')
 
   const modelProvider = useAppStore((s) => s.modelProvider)
   const modelId = useAppStore((s) => s.modelId)
 
   // Only reference profiles (concorrentes)
   const referenceProfiles = profiles.filter((p) => p.profile_type === 'reference')
+
+  // Reels agrupados por perfil (concorrente), só perfis que têm reels analisados.
+  const reelsByProfile = referenceProfiles
+    .map((p) => ({
+      profile: p,
+      reels: viralReels.filter((r) => r.profile_id === p.id),
+    }))
+    .filter((g) => g.reels.length > 0)
+
+  const visibleGroups =
+    profileFilter === 'all'
+      ? reelsByProfile
+      : reelsByProfile.filter((g) => g.profile.id === profileFilter)
 
   // Fetch analyzed reels from reference profiles, ordered by engagement
   useEffect(() => {
@@ -195,74 +209,131 @@ export default function NewScriptPage() {
               </p>
             </div>
           ) : (
-            <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
-              {viralReels.map((reel) => (
-                <Card
-                  key={reel.id}
-                  className="cursor-pointer overflow-hidden transition-all hover:border-[rgba(59,130,246,0.45)] hover:ring-1 hover:ring-primary/20"
-                  onClick={() => handleSelectReel(reel)}
+            <div className="space-y-6">
+              {/* Filtro por perfil */}
+              <div className="flex flex-wrap items-center gap-2">
+                <span className="text-xs font-medium text-muted-foreground">Perfil:</span>
+                <button
+                  onClick={() => setProfileFilter('all')}
+                  className={cn(
+                    'rounded-full border px-3 py-1 text-xs transition-all',
+                    profileFilter === 'all'
+                      ? 'border-[rgba(59,130,246,0.45)] bg-[rgba(59,130,246,0.1)] text-primary'
+                      : 'border-[rgba(59,130,246,0.12)] text-muted-foreground hover:border-[rgba(59,130,246,0.3)] hover:text-[#60A5FA]',
+                  )}
                 >
-                  {/* Thumbnail */}
-                  <div className="relative aspect-[9/16] max-h-48 w-full overflow-hidden">
-                    {reel.thumbnail_url ? (
+                  Todos ({viralReels.length})
+                </button>
+                {reelsByProfile.map(({ profile, reels }) => (
+                  <button
+                    key={profile.id}
+                    onClick={() => setProfileFilter(profile.id)}
+                    className={cn(
+                      'rounded-full border px-3 py-1 text-xs transition-all',
+                      profileFilter === profile.id
+                        ? 'border-[rgba(59,130,246,0.45)] bg-[rgba(59,130,246,0.1)] text-primary'
+                        : 'border-[rgba(59,130,246,0.12)] text-muted-foreground hover:border-[rgba(59,130,246,0.3)] hover:text-[#60A5FA]',
+                    )}
+                  >
+                    @{profile.instagram_username} ({reels.length})
+                  </button>
+                ))}
+              </div>
+
+              {/* Grupos por perfil */}
+              {visibleGroups.map(({ profile, reels }) => (
+                <div key={profile.id} className="space-y-3">
+                  {/* Separador do perfil */}
+                  <div className="flex items-center gap-3">
+                    {profile.profile_pic_url ? (
                       <img
-                        src={reel.thumbnail_url}
+                        src={profile.profile_pic_url}
                         alt=""
-                        className="size-full object-cover"
+                        className="size-7 rounded-full object-cover"
                       />
                     ) : (
-                      <div className="size-full bg-gradient-to-br from-primary/30 to-accent/20" />
+                      <div className="size-7 rounded-full bg-gradient-to-br from-primary/40 to-accent/30" />
                     )}
-                    <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
-                    <div className="absolute bottom-2 left-2 right-2">
-                      <Badge className="bg-accent/90 text-accent-foreground text-[10px]">
-                        {formatNumber(reel.engagement_score)} engagement
-                      </Badge>
-                    </div>
+                    <h3 className="text-sm font-semibold text-foreground">
+                      @{profile.instagram_username}
+                    </h3>
+                    <Badge variant="secondary" className="text-[10px]">
+                      {reels.length} {reels.length === 1 ? 'reel' : 'reels'}
+                    </Badge>
+                    <div className="h-px flex-1 bg-[rgba(59,130,246,0.12)]" />
                   </div>
 
-                  <CardContent className="space-y-2 pt-3">
-                    {/* Caption */}
-                    <p className="line-clamp-2 text-xs text-muted-foreground">
-                      {reel.caption?.slice(0, 100) ?? 'Sem legenda'}
-                    </p>
+                  <div className="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+                    {reels.map((reel) => (
+                      <Card
+                        key={reel.id}
+                        className="cursor-pointer overflow-hidden transition-all hover:border-[rgba(59,130,246,0.45)] hover:ring-1 hover:ring-primary/20"
+                        onClick={() => handleSelectReel(reel)}
+                      >
+                        {/* Thumbnail */}
+                        <div className="relative aspect-[9/16] max-h-48 w-full overflow-hidden">
+                          {reel.thumbnail_url ? (
+                            <img
+                              src={reel.thumbnail_url}
+                              alt=""
+                              className="size-full object-cover"
+                            />
+                          ) : (
+                            <div className="size-full bg-gradient-to-br from-primary/30 to-accent/20" />
+                          )}
+                          <div className="absolute inset-0 bg-gradient-to-t from-black/60 to-transparent" />
+                          <div className="absolute bottom-2 left-2 right-2">
+                            <Badge className="bg-accent/90 text-accent-foreground text-[10px]">
+                              {formatNumber(reel.engagement_score)} engagement
+                            </Badge>
+                          </div>
+                        </div>
 
-                    {/* Metrics */}
-                    <div className="grid grid-cols-4 gap-1 text-[10px] text-muted-foreground">
-                      <div className="flex items-center gap-0.5">
-                        <Heart className="size-2.5 text-red-400" />
-                        {formatNumber(reel.likes_count)}
-                      </div>
-                      <div className="flex items-center gap-0.5">
-                        <MessageCircle className="size-2.5 text-blue-400" />
-                        {formatNumber(reel.comments_count)}
-                      </div>
-                      <div className="flex items-center gap-0.5">
-                        <Share2 className="size-2.5 text-green-400" />
-                        {formatNumber(reel.shares_count)}
-                      </div>
-                      <div className="flex items-center gap-0.5">
-                        <Eye className="size-2.5 text-yellow-400" />
-                        {formatNumber(reel.views_count)}
-                      </div>
-                    </div>
+                        <CardContent className="space-y-2 pt-3">
+                          {/* Caption */}
+                          <p className="line-clamp-2 text-xs text-muted-foreground">
+                            {reel.caption?.slice(0, 100) ?? 'Sem legenda'}
+                          </p>
 
-                    {/* Analysis tags */}
-                    {reel.analysis && (
-                      <div className="flex flex-wrap gap-1">
-                        <Badge className="bg-red-500/20 text-red-400 text-[9px]">
-                          Hook: {reel.analysis.hook.type}
-                        </Badge>
-                        <Badge className="bg-blue-500/20 text-blue-400 text-[9px]">
-                          {reel.analysis.development.storytelling_technique}
-                        </Badge>
-                        <Badge className="bg-green-500/20 text-green-400 text-[9px]">
-                          CTA: {reel.analysis.cta.type}
-                        </Badge>
-                      </div>
-                    )}
-                  </CardContent>
-                </Card>
+                          {/* Metrics */}
+                          <div className="grid grid-cols-4 gap-1 text-[10px] text-muted-foreground">
+                            <div className="flex items-center gap-0.5">
+                              <Heart className="size-2.5 text-red-400" />
+                              {formatNumber(reel.likes_count)}
+                            </div>
+                            <div className="flex items-center gap-0.5">
+                              <MessageCircle className="size-2.5 text-blue-400" />
+                              {formatNumber(reel.comments_count)}
+                            </div>
+                            <div className="flex items-center gap-0.5">
+                              <Share2 className="size-2.5 text-green-400" />
+                              {formatNumber(reel.shares_count)}
+                            </div>
+                            <div className="flex items-center gap-0.5">
+                              <Eye className="size-2.5 text-yellow-400" />
+                              {formatNumber(reel.views_count)}
+                            </div>
+                          </div>
+
+                          {/* Analysis tags */}
+                          {reel.analysis && (
+                            <div className="flex flex-wrap gap-1">
+                              <Badge className="bg-red-500/20 text-red-400 text-[9px]">
+                                Hook: {reel.analysis.hook.type}
+                              </Badge>
+                              <Badge className="bg-blue-500/20 text-blue-400 text-[9px]">
+                                {reel.analysis.development.storytelling_technique}
+                              </Badge>
+                              <Badge className="bg-green-500/20 text-green-400 text-[9px]">
+                                CTA: {reel.analysis.cta.type}
+                              </Badge>
+                            </div>
+                          )}
+                        </CardContent>
+                      </Card>
+                    ))}
+                  </div>
+                </div>
               ))}
             </div>
           )}

@@ -4,7 +4,7 @@
 
 // --- Model Provider ---
 
-export type ModelProvider = 'openai';
+export type ModelProvider = 'openai' | 'anthropic';
 
 export type ModelOption = {
   provider: ModelProvider;
@@ -13,9 +13,24 @@ export type ModelOption = {
   description?: string;
 };
 
-export const MODEL_OPTIONS: ModelOption[] = [
+// Modelos OpenAI — sempre disponíveis.
+export const OPENAI_MODEL_OPTIONS: ModelOption[] = [
+  { provider: 'openai', model: 'gpt-5.4', label: 'GPT-5.4', description: 'Raciocínio avançado, topo de linha' },
+  { provider: 'openai', model: 'gpt-5.4-mini', label: 'GPT-5.4 mini', description: 'Rápido e econômico' },
   { provider: 'openai', model: 'gpt-4.1', label: 'GPT-4.1', description: 'Robusto, contexto longo' },
   { provider: 'openai', model: 'gpt-4o', label: 'GPT-4o', description: 'Multimodal padrão, rápido' },
+];
+
+// Modelos Anthropic — só aparecem quando o usuário ativa em Configurações
+// Avançadas (requer chave da Anthropic). Não fazem parte do wizard.
+export const ANTHROPIC_MODEL_OPTIONS: ModelOption[] = [
+  { provider: 'anthropic', model: 'claude-sonnet-4-6', label: 'Sonnet 4.6', description: 'Anthropic — equilíbrio de qualidade e custo' },
+  { provider: 'anthropic', model: 'claude-opus-4-8', label: 'Opus 4.8', description: 'Anthropic — máxima qualidade' },
+];
+
+export const MODEL_OPTIONS: ModelOption[] = [
+  ...OPENAI_MODEL_OPTIONS,
+  ...ANTHROPIC_MODEL_OPTIONS,
 ];
 
 // --- Profiles ---

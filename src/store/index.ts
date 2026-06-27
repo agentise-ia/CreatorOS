@@ -32,6 +32,10 @@ interface AppState {
   modelProvider: ModelProvider
   modelId: string
   setModel: (provider: ModelProvider, modelId: string) => void
+
+  // Anthropic (modelos Sonnet/Opus) — ativado em Configurações Avançadas
+  anthropicEnabled: boolean
+  setAnthropicEnabled: (enabled: boolean) => void
 }
 
 export const useAppStore = create<AppState>()(
@@ -75,24 +79,42 @@ export const useAppStore = create<AppState>()(
       modelProvider: 'openai',
       modelId: 'gpt-4.1',
       setModel: (modelProvider, modelId) => set({ modelProvider, modelId }),
+
+      // Anthropic toggle
+      anthropicEnabled: false,
+      setAnthropicEnabled: (anthropicEnabled) =>
+        set((state) => {
+          // Ao desativar, se o modelo selecionado for da Anthropic, volta pro
+          // padrão OpenAI para evitar gerar com um provider desligado.
+          if (!anthropicEnabled && state.modelProvider === 'anthropic') {
+            return { anthropicEnabled, modelProvider: 'openai', modelId: 'gpt-4.1' }
+          }
+          return { anthropicEnabled }
+        }),
     }),
     {
       name: 'viralscript-settings',
-      version: 4,
+      version: 5,
       partialize: (state) => ({
         modelProvider: state.modelProvider,
         modelId: state.modelId,
+        anthropicEnabled: state.anthropicEnabled,
       }),
       // Reset preference when persisted modelId is no longer in MODEL_OPTIONS
       migrate: (persisted) => {
-        const s = persisted as { modelProvider?: ModelProvider; modelId?: string }
+        const s = persisted as {
+          modelProvider?: ModelProvider
+          modelId?: string
+          anthropicEnabled?: boolean
+        }
+        const anthropicEnabled = s.anthropicEnabled ?? false
         const valid = MODEL_OPTIONS.some(
           (o) => o.provider === s.modelProvider && o.model === s.modelId
         )
         if (!valid) {
-          return { modelProvider: 'openai', modelId: 'gpt-4.1' }
+          return { modelProvider: 'openai', modelId: 'gpt-4.1', anthropicEnabled }
         }
-        return s
+        return { ...s, anthropicEnabled }
       },
     }
   )

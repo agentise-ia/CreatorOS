@@ -42,5 +42,15 @@
     "typescript": "~5.9.3",
     "typescript-eslint": "^8.57.0",
     "vite": "^8.0.1"
+  },
+  "overrides": {
+    "js-yaml": "^4.3.0",
+    "@vercel/node": {
+      "undici": "^7.16.0",
+      "path-to-regexp": "^8.2.0",
+      "ajv": "^8.20.0",
+      "minimatch": "^10.2.5",
+      "smol-toml": "^1.7.0"
+    }
   }
 }

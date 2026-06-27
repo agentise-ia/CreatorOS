@@ -1,6 +1,6 @@
 import { NavLink } from 'react-router-dom'
 import {
-  Zap,
+  Play,
   LayoutDashboard,
   Users,
   Mic,
@@ -46,7 +46,9 @@ export function Sidebar({ collapsed, onToggle }: SidebarProps) {
     >
       {/* Brand */}
       <div className="flex h-16 items-center gap-2 border-b border-[rgba(59,130,246,0.1)] px-4">
-        <Zap className="h-6 w-6 shrink-0 text-primary" />
+        <div className="flex size-7 shrink-0 items-center justify-center rounded-lg bg-gradient-to-br from-[#2563EB] to-[#3B82F6] shadow-[0_0_12px_rgba(59,130,246,0.4)]">
+          <Play className="size-4 text-white" fill="currentColor" strokeWidth={0} />
+        </div>
         {!collapsed && (
           <span className="truncate text-sm font-bold tracking-tight text-foreground">
             {APP_NAME}

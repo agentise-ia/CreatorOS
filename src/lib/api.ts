@@ -132,6 +132,23 @@ export async function generateVoiceProfile(
   return data as { job_id: string };
 }
 
+export async function updateVoiceProfileDocument(
+  voiceProfileId: string,
+  fullProfileDocument: string
+): Promise<void> {
+  const { error } = await supabase
+    .from('voice_profiles')
+    .update({
+      full_profile_document: fullProfileDocument,
+      updated_at: new Date().toISOString(),
+    })
+    .eq('id', voiceProfileId);
+
+  if (error) {
+    throw new Error(`Falha ao salvar o Voice Profile: ${error.message}`);
+  }
+}
+
 export async function saveScriptEdit(
   scriptId: string,
   teleprompterText: string

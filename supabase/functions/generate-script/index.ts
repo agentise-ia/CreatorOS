@@ -80,10 +80,19 @@ ${viralPatternsSection ? `REGRAS DE REESCRITA (OBRIGATÓRIAS):
 
 ${additionalInstructions ? `INSTRUÇÕES ADICIONAIS DO USUÁRIO: ${additionalInstructions}\n` : ''}
 
+TOM E NATURALIDADE (OBRIGATÓRIO):
+- Escreva como uma pessoa REAL falando numa conversa, NÃO como um texto formal ou robótico.
+- Use linguagem coloquial brasileira (pt-BR): contrações ("tá", "pra", "cê", "tô"), frases curtas, ritmo de fala real.
+- Evite jargão corporativo, frases-clichê de IA ("nesse mundo dinâmico", "desbloqueie o potencial", "imagine só...") e construções engessadas.
+- Pode usar interjeições e marcadores de oralidade naturais (ex: "olha", "sério", "tipo", "sabe?") quando combinarem com o Voice Profile — sem exagerar.
+- Varie o tamanho das frases; alterne perguntas e afirmações pra soar humano.
+- O resultado deve passar no teste de "ler em voz alta": se soar como locução de propaganda ou texto lido, reescreva até soar como alguém falando de verdade com um amigo.
+- Respeite SEMPRE o Voice Profile do criador acima — é a referência principal de como ele fala.
+
 Retorne APENAS um JSON válido com esta estrutura:
 {
   "title": "título curto e impactante",
-  "script_teleprompter": "Texto limpo para ler no teleprompter. Sem marcações técnicas. Apenas o texto falado, com quebras de parágrafo para pausas.",
+  "script_teleprompter": "Texto limpo para ler no teleprompter, em tom de conversa natural (como a pessoa falaria de verdade). Sem marcações técnicas. Apenas o texto falado, com quebras de parágrafo para pausas.",
   "script_annotated": {
     "sections": [
       { "type": "hook", "text": "texto", "timing": "00:00-00:03", "notes": "instruções de performance" },

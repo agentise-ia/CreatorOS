@@ -1,5 +1,5 @@
 import { useState, useEffect, useRef } from 'react'
-import { Mic, Loader2, RefreshCw, Quote, Zap, Download, Check, X, AlertCircle, Eye, Film } from 'lucide-react'
+import { Mic, Loader2, RefreshCw, Quote, Zap, Download, Check, X, AlertCircle, Eye, Film, Pencil, Save } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
@@ -10,7 +10,7 @@ import { ModelSelector } from '@/components/shared/ModelSelector'
 import { useVoiceProfile } from '@/hooks/useVoiceProfile'
 import { useProfiles } from '@/hooks/useProfiles'
 import { useAppStore } from '@/store'
-import { generateVoiceProfile, scrapeProfile, cancelJob } from '@/lib/api'
+import { generateVoiceProfile, scrapeProfile, cancelJob, updateVoiceProfileDocument } from '@/lib/api'
 import { formatDate } from '@/lib/utils'
 import supabase from '@/lib/supabase'
 import type { Profile, Reel } from '@/types'
@@ -54,6 +54,13 @@ export default function VoiceProfilePage() {
   const [ownUsernameInput, setOwnUsernameInput] = useState('')
   const [creatingOwn, setCreatingOwn] = useState(false)
   const [createOwnError, setCreateOwnError] = useState<string | null>(null)
+  const [scrapeJobId, setScrapeJobId] = useState<string | null>(null)
+  const [regenerating, setRegenerating] = useState(false)
+  // Edição do Documento Completo do Voice Profile
+  const [editingDoc, setEditingDoc] = useState(false)
+  const [docDraft, setDocDraft] = useState('')
+  const [savingDoc, setSavingDoc] = useState(false)
+  const [docError, setDocError] = useState<string | null>(null)
 
   const ownProfile = profiles.find((p) => p.profile_type === 'own')
   const vpJobs = activeJobs.filter(
@@ -117,6 +124,7 @@ export default function VoiceProfilePage() {
       setScrapeProgress(100)
       setReelsRefreshKey((k) => k + 1)
       trackedJobRef.current = null
+      setScrapeJobId(null)
       const t = setTimeout(() => setScrapeStatus('idle'), 4000)
       return () => clearTimeout(t)
     }
@@ -125,6 +133,7 @@ export default function VoiceProfilePage() {
       setScrapeStatus('error')
       setScrapeError(ownScrapeJob.error_message ?? 'Falha no processamento')
       trackedJobRef.current = null
+      setScrapeJobId(null)
       const t = setTimeout(() => setScrapeStatus('idle'), 8000)
       return () => clearTimeout(t)
     }
@@ -142,11 +151,16 @@ export default function VoiceProfilePage() {
       .then(({ data }) => {
         const reels = (data ?? []) as Reel[]
         setOwnReels(reels)
-        // Pre-select top 5-10
-        const preselect = reels.slice(0, Math.min(10, reels.length)).map((r) => r.id)
+        // Se já existe Voice Profile, pré-seleciona os vídeos usados na última
+        // geração; senão, pré-seleciona os top 10 por engajamento.
+        const previous = voiceProfile?.source_reel_ids ?? []
+        const previousAvailable = previous.filter((id) => reels.some((r) => r.id === id))
+        const preselect = previousAvailable.length > 0
+          ? previousAvailable
+          : reels.slice(0, Math.min(10, reels.length)).map((r) => r.id)
         setSelectedReels(new Set(preselect))
       })
-  }, [ownProfile, reelsRefreshKey])
+  }, [ownProfile, reelsRefreshKey, voiceProfile])
 
   async function handleCreateOwn(e: React.FormEvent) {
     e.preventDefault()
@@ -197,7 +211,8 @@ export default function VoiceProfilePage() {
     setScrapeStatus('starting')
     setScrapeProgress(0)
     try {
-      await scrapeProfile([ownProfile.instagram_username], 'own')
+      const { job_id } = await scrapeProfile([ownProfile.instagram_username], 'own')
+      setScrapeJobId(job_id)
       // The job is now in flight. The useEffect watching ownScrapeJob will
       // pick it up via Supabase Realtime and drive scrapeStatus/progress —
       // this works even if the user navigates away and comes back.
@@ -209,6 +224,16 @@ export default function VoiceProfilePage() {
     }
   }
 
+  async function handleCancelScrape() {
+    const id = ownScrapeJob?.id ?? scrapeJobId
+    setScrapeStatus('idle')
+    setScrapeProgress(0)
+    setScrapeError(null)
+    trackedJobRef.current = null
+    setScrapeJobId(null)
+    if (id) await cancelJob(id).catch(() => {})
+  }
+
   const modelProvider = useAppStore((s) => s.modelProvider)
   const modelId = useAppStore((s) => s.modelId)
 
@@ -218,6 +243,7 @@ export default function VoiceProfilePage() {
     setVpError(null)
     try {
       await generateVoiceProfile(ownProfile.id, Array.from(selectedReels), modelProvider, modelId)
+      setRegenerating(false)
       // Job is now in flight. The useEffect watching activeVPJob picks it up
       // via Realtime and drives the button state until completion.
     } catch (err) {
@@ -225,6 +251,21 @@ export default function VoiceProfilePage() {
       setTimeout(() => setVpError(null), 8000)
     } finally {
       setGenerating(false)
+    }
+  }
+
+  async function handleSaveDoc() {
+    if (!voiceProfile) return
+    setSavingDoc(true)
+    setDocError(null)
+    try {
+      await updateVoiceProfileDocument(voiceProfile.id, docDraft)
+      await refetchVoiceProfile()
+      setEditingDoc(false)
+    } catch (err) {
+      setDocError(err instanceof Error ? err.message : 'Erro ao salvar')
+    } finally {
+      setSavingDoc(false)
     }
   }
 
@@ -275,20 +316,27 @@ export default function VoiceProfilePage() {
               {scrapeStatus === 'error' && (<><X className="size-3" />Falhou — tentar novamente</>)}
             </Button>
           )}
-          {voiceProfile && (
-            <Button variant="outline" size="sm" onClick={handleGenerate} disabled={generating}>
-              <RefreshCw className="size-3" />
-              Regenerar
+          {(scrapeStatus === 'starting' || scrapeStatus === 'processing') && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={handleCancelScrape}
+              className="border-destructive/40 text-destructive hover:bg-destructive/10 hover:text-destructive"
+            >
+              <X className="size-3" />
+              Cancelar extração
             </Button>
           )}
-          {ownScrapeJob && scrapeStatus === 'processing' && (
-            <button
-              type="button"
-              onClick={() => cancelJob(ownScrapeJob.id).catch(() => {})}
-              className="text-xs text-muted-foreground transition-colors hover:text-destructive"
+          {voiceProfile && (
+            <Button
+              variant="outline"
+              size="sm"
+              onClick={() => setRegenerating((v) => !v)}
+              disabled={generating || isGenerating}
             >
-              Cancelar
-            </button>
+              <RefreshCw className="size-3" />
+              {regenerating ? 'Fechar' : 'Regenerar'}
+            </Button>
           )}
         </div>
       </div>
@@ -464,27 +512,82 @@ export default function VoiceProfilePage() {
           {/* Full profile document */}
           <Card className="lg:col-span-2">
             <CardContent className="pt-4">
-              <h3 className="mb-3 text-sm font-semibold text-foreground">
-                Documento Completo do Voice Profile
-              </h3>
-              <div className="max-h-64 overflow-y-auto rounded-lg bg-[rgba(59,130,246,0.05)] border border-[rgba(59,130,246,0.12)] p-4">
-                <pre className="whitespace-pre-wrap text-xs text-foreground leading-relaxed">
-                  {voiceProfile.full_profile_document}
-                </pre>
+              <div className="mb-3 flex items-center justify-between gap-2">
+                <h3 className="text-sm font-semibold text-foreground">
+                  Documento Completo do Voice Profile
+                </h3>
+                {!editingDoc ? (
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    onClick={() => {
+                      setDocDraft(voiceProfile.full_profile_document)
+                      setDocError(null)
+                      setEditingDoc(true)
+                    }}
+                  >
+                    <Pencil className="size-3" />
+                    Editar
+                  </Button>
+                ) : (
+                  <div className="flex items-center gap-2">
+                    <Button
+                      variant="ghost"
+                      size="sm"
+                      onClick={() => {
+                        setEditingDoc(false)
+                        setDocError(null)
+                      }}
+                      disabled={savingDoc}
+                    >
+                      Cancelar
+                    </Button>
+                    <Button
+                      size="sm"
+                      onClick={handleSaveDoc}
+                      disabled={savingDoc || docDraft.trim().length === 0}
+                    >
+                      {savingDoc ? <Loader2 className="size-3 animate-spin" /> : <Save className="size-3" />}
+                      Salvar
+                    </Button>
+                  </div>
+                )}
               </div>
+              {docError && (
+                <div className="mb-3 flex items-start gap-2 rounded-lg bg-destructive/5 border border-destructive/20 px-3 py-2">
+                  <AlertCircle className="mt-0.5 size-4 shrink-0 text-destructive" />
+                  <p className="text-xs text-destructive">{docError}</p>
+                </div>
+              )}
+              {editingDoc ? (
+                <textarea
+                  value={docDraft}
+                  onChange={(e) => setDocDraft(e.target.value)}
+                  disabled={savingDoc}
+                  className="min-h-64 w-full resize-y rounded-lg border border-[rgba(59,130,246,0.2)] bg-[rgba(59,130,246,0.05)] p-4 text-xs leading-relaxed text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                />
+              ) : (
+                <div className="max-h-64 overflow-y-auto rounded-lg bg-[rgba(59,130,246,0.05)] border border-[rgba(59,130,246,0.12)] p-4">
+                  <pre className="whitespace-pre-wrap text-xs text-foreground leading-relaxed">
+                    {voiceProfile.full_profile_document}
+                  </pre>
+                </div>
+              )}
             </CardContent>
           </Card>
         </div>
       )}
 
-      {/* Generate section (when no profile yet or when ownProfile exists) */}
-      {ownProfile && !voiceProfile && ownReels.length > 0 && (
-        <Card>
+      {/* Generate section: aparece quando não há profile ainda OU ao regenerar */}
+      {ownProfile && ownReels.length > 0 && (!voiceProfile || regenerating) && (
+        <Card className={cn(regenerating && 'border-[rgba(59,130,246,0.3)]')}>
           <CardContent className="space-y-4 pt-4">
             <div className="flex items-center justify-between">
               <div className="flex items-center gap-2">
                 <Zap className="size-4 text-primary" />
-                <h3 className="text-sm font-semibold">Gerar Voice Profile</h3>
+                <h3 className="text-sm font-semibold">
+                  {regenerating ? 'Regenerar Voice Profile' : 'Gerar Voice Profile'}
+                </h3>
               </div>
               <Button
                 size="sm"
@@ -511,7 +614,9 @@ export default function VoiceProfilePage() {
             )}
 
             <p className="text-xs text-muted-foreground">
-              Selecione pelo menos 5 vídeos para um resultado mais preciso (mínimo 3).
+              {regenerating
+                ? 'Selecione quais vídeos serão usados para gerar seu estilo de fala. Isso substituirá o Voice Profile atual.'
+                : 'Selecione pelo menos 5 vídeos para um resultado mais preciso (mínimo 3).'}
             </p>
 
             <ModelSelector compact />

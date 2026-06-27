@@ -78,6 +78,15 @@ ${viralPatternsSection ? `REGRAS DE REESCRITA (OBRIGATÓRIAS):
 - Se uma frase da sua resposta puder ser encontrada igual na transcrição original, reescreva-a.
 ` : ''}
 
+${viralPatternsSection ? `FIDELIDADE À ESTRUTURA VIRAL (OBRIGATÓRIO):
+- Espelhe a ESTRUTURA e o RITMO do reel de referência, não invente um formato diferente.
+- O comprimento de CADA seção deve ficar próximo do original (siga as MÉTRICAS ESTRUTURAIS acima, margem de ±20%). Se o hook original é DIRETO e CURTO, o seu hook também tem que ser direto e curto — NÃO o alongue com rodeios ou frases de aquecimento.
+- Mantenha o mesmo padrão de entrega: se o original já entra no assunto na primeira frase (ex: "5 coisas que você não conhece. Número 1..."), o seu também deve entrar direto, sem introdução extra.
+- Replique o formato de enumeração/transições do original (ex: "Número 1", "A primeira é...", contagem) se ele usar.
+- Mantenha a densidade de informação: mesma quantidade aproximada de pontos/itens, no mesmo ritmo.
+- Combine isto com o tom de voz do criador — a ESTRUTURA vem da referência, as PALAVRAS e o TOM vêm do criador.
+` : ''}
+
 ${additionalInstructions ? `INSTRUÇÕES ADICIONAIS DO USUÁRIO: ${additionalInstructions}\n` : ''}
 
 TOM E NATURALIDADE (OBRIGATÓRIO):
@@ -135,6 +144,13 @@ Retorne APENAS um JSON válido com esta estrutura:
     "captions_style": "estilo de legendas"
   }
 }`
+}
+
+function countWords(text: unknown): number {
+  if (typeof text !== 'string') return 0
+  const trimmed = text.trim()
+  if (!trimmed) return 0
+  return trimmed.split(/\s+/).length
 }
 
 function isReasoningModel(modelId: string): boolean {
@@ -344,15 +360,26 @@ async function generateScriptCore(
           const transcript = transcriptByReel.get(reelId) ?? ''
           const caption = captionByReel.get(reelId) ?? ''
 
+          const hookWords = countWords(hook?.text)
+          const devWords = countWords(development?.text)
+          const ctaWords = countWords(cta?.text)
+          const totalWords = countWords(transcript) || (hookWords + devWords + ctaWords)
+
           return `Referência ${i + 1}:
 ${transcript ? `<transcricao_original>\n${transcript}\n</transcricao_original>` : '(transcrição indisponível)'}
 ${caption ? `LEGENDA: ${caption}` : ''}
 
 ANÁLISE DA ESTRUTURA VIRAL:
-- Hook (tipo "${hook?.type}", eficácia ${hook?.effectiveness_score}/10): ${hook?.text ?? ''}
-- Desenvolvimento (técnica ${development?.storytelling_technique}): ${development?.text ?? ''}
-- CTA (tipo "${cta?.type}", força ${cta?.strength_score}/10): ${cta?.text ?? ''}
-- Padrões: ${JSON.stringify(a.viral_patterns)}`
+- Hook (tipo "${hook?.type}", eficácia ${hook?.effectiveness_score}/10, ~${hookWords} palavras): ${hook?.text ?? ''}
+- Desenvolvimento (técnica ${development?.storytelling_technique}, ~${devWords} palavras): ${development?.text ?? ''}
+- CTA (tipo "${cta?.type}", força ${cta?.strength_score}/10, ~${ctaWords} palavras): ${cta?.text ?? ''}
+- Padrões: ${JSON.stringify(a.viral_patterns)}
+
+MÉTRICAS ESTRUTURAIS A ESPELHAR (seu roteiro deve ficar próximo destes números, ±20%):
+- Hook: ~${hookWords} palavras
+- Desenvolvimento: ~${devWords} palavras
+- CTA: ~${ctaWords} palavras
+- Roteiro total: ~${totalWords} palavras`
         })
         viralPatternsSection = patterns.join('\n\n---\n\n')
       } else {

@@ -14,7 +14,7 @@ export type AppUser = {
 export type Invite = {
   id: string
   email: string
-  role: 'member'
+  role: AppRole
   invited_by: string | null
   expires_at: string
   used_at: string | null

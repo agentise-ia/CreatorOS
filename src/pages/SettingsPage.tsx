@@ -8,6 +8,7 @@ import {
   Loader2,
   ChevronDown,
   Sparkles,
+  UserPlus,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -17,9 +18,18 @@ import { useAppStore } from '@/store'
 import { useAppUser } from '@/hooks/useAppUser'
 import { cn } from '@/lib/utils'
 import supabase from '@/lib/supabase'
+import { createInvite } from '@/lib/api'
+import type { AppRole } from '@/types/auth'
 import { setupConfig } from '../../setup.config'
 
 type SaveState = 'idle' | 'saving' | 'saved' | 'error'
+
+const ROLE_LABELS: Record<AppRole, string> = {
+  owner: 'Owner',
+  admin: 'Admin',
+  operator: 'Operador',
+  member: 'Membro',
+}
 
 export default function SettingsPage() {
   const user = useAppStore((s) => s.user)
@@ -37,6 +47,34 @@ export default function SettingsPage() {
   const [saveState, setSaveState] = useState<SaveState>('idle')
   const [errorMessage, setErrorMessage] = useState<string | null>(null)
   const [advancedOpen, setAdvancedOpen] = useState(false)
+
+  // Convite de novos usuários (herda a role de quem convida)
+  const [inviteEmail, setInviteEmail] = useState('')
+  const [inviteState, setInviteState] = useState<SaveState>('idle')
+  const [inviteError, setInviteError] = useState<string | null>(null)
+  const [invitedTo, setInvitedTo] = useState<string | null>(null)
+
+  const myRole = appUser?.role
+  const myRoleLabel = myRole ? ROLE_LABELS[myRole] : null
+
+  async function sendInvite(e: React.FormEvent) {
+    e.preventDefault()
+    const email = inviteEmail.trim()
+    if (!email) return
+    setInviteState('saving')
+    setInviteError(null)
+    setInvitedTo(null)
+    try {
+      await createInvite(email)
+      setInvitedTo(email)
+      setInviteEmail('')
+      setInviteState('saved')
+      setTimeout(() => setInviteState('idle'), 2000)
+    } catch (err) {
+      setInviteState('error')
+      setInviteError((err as Error).message)
+    }
+  }
 
   useEffect(() => {
     let cancelled = false
@@ -361,6 +399,70 @@ export default function SettingsPage() {
           )}
         </CardContent>
       </Card>
+
+      {/* Convidar usuário — herda a mesma role de quem convida */}
+      {myRole && (
+        <Card>
+          <CardContent className="space-y-3 pt-4">
+            <div className="flex items-center gap-2">
+              <UserPlus className="size-4 text-primary" />
+              <h3 className="text-sm font-semibold text-foreground">
+                Convidar usuário
+              </h3>
+              {myRoleLabel && (
+                <Badge
+                  variant="secondary"
+                  className="text-[10px] border border-[rgba(59,130,246,0.2)]"
+                >
+                  mesma role: {myRoleLabel}
+                </Badge>
+              )}
+            </div>
+            <p className="text-xs text-muted-foreground">
+              O convidado recebe um email com um magic link (válido por 7 dias) e
+              entrará com a <strong>mesma role que você</strong>
+              {myRoleLabel ? ` (${myRoleLabel})` : ''}.
+            </p>
+
+            <form onSubmit={sendInvite} className="flex gap-2">
+              <input
+                type="email"
+                value={inviteEmail}
+                placeholder="convidado@email.com"
+                onChange={(e) => setInviteEmail(e.target.value)}
+                className="flex-1 rounded-lg border border-[rgba(59,130,246,0.2)] bg-[rgba(255,255,255,0.03)] px-3 py-2 text-xs text-[#F8FAFC] outline-none transition-all focus:border-[#3B82F6] focus:shadow-[0_0_30px_rgba(59,130,246,0.3)]"
+              />
+              <button
+                type="submit"
+                disabled={!inviteEmail.trim() || inviteState === 'saving'}
+                className="rounded-lg bg-gradient-to-br from-[#1E3A8A] to-[#3B82F6] px-3 py-2 text-xs font-medium text-white shadow-[0_0_20px_rgba(59,130,246,0.3)] transition-all duration-300 enabled:hover:shadow-[0_0_40px_rgba(59,130,246,0.5)] disabled:opacity-40 disabled:shadow-none"
+              >
+                {inviteState === 'saving' ? (
+                  <Loader2 className="size-3 animate-spin" />
+                ) : (
+                  'Convidar'
+                )}
+              </button>
+            </form>
+
+            {invitedTo && (
+              <div className="flex items-center gap-1.5 rounded-lg border border-[rgba(16,185,129,0.25)] bg-[rgba(16,185,129,0.05)] p-2 text-xs text-[#10B981]">
+                <CheckCircle2 className="size-3.5 shrink-0" />
+                <span>
+                  Convite enviado para <strong>{invitedTo}</strong>. O magic link
+                  expira em 7 dias.
+                </span>
+              </div>
+            )}
+
+            {inviteError && (
+              <div className="rounded-lg border border-[rgba(239,68,68,0.3)] bg-[rgba(239,68,68,0.05)] p-2">
+                <p className="text-xs text-[#FCA5A5]">{inviteError}</p>
+              </div>
+            )}
+          </CardContent>
+        </Card>
+      )}
 
       {/* Admin-only section */}
       {isAdmin && (

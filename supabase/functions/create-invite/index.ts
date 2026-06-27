@@ -46,9 +46,13 @@ serve(async (req: Request) => {
       .eq('user_id', user.id)
       .single()
 
-    if (!caller || caller.role !== 'owner') {
-      return json({ error: 'Apenas o owner pode criar convites' }, 403)
+    // Qualquer membro pode convidar um par com a MESMA role que a sua. Herdar a
+    // própria role não escala privilégio — só concede o que o caller já possui.
+    const VALID_ROLES = ['owner', 'admin', 'operator', 'member']
+    if (!caller || !VALID_ROLES.includes(caller.role)) {
+      return json({ error: 'Sem permissão para criar convites' }, 403)
     }
+    const inviteRole = caller.role
 
     let body: CreateInviteRequest
     try {
@@ -107,7 +111,7 @@ serve(async (req: Request) => {
 
     const { data: invite, error: insertErr } = await supabase
       .from('invites')
-      .insert({ email, token: placeholderToken, role: 'member', invited_by: user.id })
+      .insert({ email, token: placeholderToken, role: inviteRole, invited_by: user.id })
       .select('id, email, expires_at')
       .single()
 
@@ -119,6 +123,7 @@ serve(async (req: Request) => {
     return json({
       ok: true,
       email,
+      role: inviteRole,
       invite_id: invite.id,
       expires_at: invite.expires_at,
     })

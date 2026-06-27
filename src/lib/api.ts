@@ -240,6 +240,7 @@ export async function restoreScriptVersion(
 export async function createInvite(email: string): Promise<{
   ok: boolean
   email: string
+  role?: string
   invite_id?: string
   expires_at?: string
 }> {

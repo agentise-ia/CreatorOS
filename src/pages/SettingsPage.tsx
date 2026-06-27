@@ -341,7 +341,7 @@ export default function SettingsPage() {
                       aria-checked={anthropicEnabled}
                       onClick={() => setAnthropicEnabled(!anthropicEnabled)}
                       className={cn(
-                        'relative mt-0.5 h-5 w-9 shrink-0 rounded-full transition-colors',
+                        'relative mt-0.5 inline-flex h-5 w-9 shrink-0 cursor-pointer appearance-none items-center rounded-full border-0 p-0.5 transition-colors',
                         anthropicEnabled
                           ? 'bg-[#3B82F6]'
                           : 'bg-[rgba(148,163,184,0.3)]',
@@ -349,8 +349,8 @@ export default function SettingsPage() {
                     >
                       <span
                         className={cn(
-                          'absolute top-0.5 size-4 rounded-full bg-white transition-transform',
-                          anthropicEnabled ? 'translate-x-4' : 'translate-x-0.5',
+                          'size-4 rounded-full bg-white shadow-sm transition-transform',
+                          anthropicEnabled ? 'translate-x-4' : 'translate-x-0',
                         )}
                       />
                     </button>

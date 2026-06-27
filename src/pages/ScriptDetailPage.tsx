@@ -12,6 +12,7 @@ import {
   RotateCcw,
   Columns2,
   Film,
+  ExternalLink,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
@@ -107,6 +108,10 @@ export default function ScriptDetailPage() {
     ? sourceReel.storage_path
       ? supabase.storage.from('videos').getPublicUrl(sourceReel.storage_path).data.publicUrl
       : sourceReel.video_url
+    : null
+
+  const sourceInstagramUrl = sourceReel?.shortcode
+    ? `https://www.instagram.com/reel/${sourceReel.shortcode}/`
     : null
 
   const hasUnsavedChanges = script ? editedText !== script.script_teleprompter : false
@@ -815,6 +820,18 @@ export default function ScriptDetailPage() {
                     {formatNumber(sourceReel.engagement_score)} engagement
                   </Badge>
                 </div>
+                {sourceInstagramUrl && (
+                  <Button asChild variant="outline" className="w-full">
+                    <a
+                      href={sourceInstagramUrl}
+                      target="_blank"
+                      rel="noopener noreferrer"
+                    >
+                      <ExternalLink className="size-4" />
+                      Ver no Instagram
+                    </a>
+                  </Button>
+                )}
               </>
             ) : (
               <p className="text-sm text-muted-foreground">

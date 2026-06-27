@@ -9,6 +9,8 @@ import {
   ChevronDown,
   Sparkles,
   UserPlus,
+  Copy,
+  Check,
 } from 'lucide-react'
 import { Card, CardContent } from '@/components/ui/card'
 import { Label } from '@/components/ui/label'
@@ -53,6 +55,8 @@ export default function SettingsPage() {
   const [inviteState, setInviteState] = useState<SaveState>('idle')
   const [inviteError, setInviteError] = useState<string | null>(null)
   const [invitedTo, setInvitedTo] = useState<string | null>(null)
+  const [inviteLink, setInviteLink] = useState<string | null>(null)
+  const [linkCopied, setLinkCopied] = useState(false)
 
   const myRole = appUser?.role
   const myRoleLabel = myRole ? ROLE_LABELS[myRole] : null
@@ -64,15 +68,28 @@ export default function SettingsPage() {
     setInviteState('saving')
     setInviteError(null)
     setInvitedTo(null)
+    setInviteLink(null)
+    setLinkCopied(false)
     try {
-      await createInvite(email)
+      const res = await createInvite(email)
       setInvitedTo(email)
+      setInviteLink(res.invite_link ?? null)
       setInviteEmail('')
       setInviteState('saved')
-      setTimeout(() => setInviteState('idle'), 2000)
     } catch (err) {
       setInviteState('error')
       setInviteError((err as Error).message)
+    }
+  }
+
+  async function copyInviteLink() {
+    if (!inviteLink) return
+    try {
+      await navigator.clipboard.writeText(inviteLink)
+      setLinkCopied(true)
+      setTimeout(() => setLinkCopied(false), 2000)
+    } catch {
+      /* clipboard bloqueado — o usuário pode copiar manualmente do campo */
     }
   }
 
@@ -419,8 +436,8 @@ export default function SettingsPage() {
               )}
             </div>
             <p className="text-xs text-muted-foreground">
-              O convidado recebe um email com um magic link (válido por 7 dias) e
-              entrará com a <strong>mesma role que você</strong>
+              Gera um link de convite (válido por 7 dias) para você compartilhar.
+              Quem aceitar entrará com a <strong>mesma role que você</strong>
               {myRoleLabel ? ` (${myRoleLabel})` : ''}.
             </p>
 
@@ -446,12 +463,39 @@ export default function SettingsPage() {
             </form>
 
             {invitedTo && (
-              <div className="flex items-center gap-1.5 rounded-lg border border-[rgba(16,185,129,0.25)] bg-[rgba(16,185,129,0.05)] p-2 text-xs text-[#10B981]">
-                <CheckCircle2 className="size-3.5 shrink-0" />
-                <span>
-                  Convite enviado para <strong>{invitedTo}</strong>. O magic link
-                  expira em 7 dias.
-                </span>
+              <div className="space-y-2 rounded-lg border border-[rgba(16,185,129,0.25)] bg-[rgba(16,185,129,0.05)] p-3">
+                <div className="flex items-center gap-1.5 text-xs text-[#10B981]">
+                  <CheckCircle2 className="size-3.5 shrink-0" />
+                  <span>
+                    Convite gerado para <strong>{invitedTo}</strong>. Copie o link
+                    abaixo e envie — expira em 7 dias.
+                  </span>
+                </div>
+                {inviteLink && (
+                  <div className="flex gap-2">
+                    <input
+                      readOnly
+                      value={inviteLink}
+                      onFocus={(e) => e.currentTarget.select()}
+                      className="flex-1 rounded-lg border border-[rgba(16,185,129,0.25)] bg-[rgba(255,255,255,0.03)] px-3 py-2 font-mono text-[11px] text-[#CBD5E1] outline-none"
+                    />
+                    <button
+                      type="button"
+                      onClick={copyInviteLink}
+                      className="flex items-center gap-1.5 rounded-lg border border-[rgba(16,185,129,0.3)] bg-[rgba(16,185,129,0.08)] px-3 py-2 text-xs font-medium text-[#10B981] transition-colors hover:bg-[rgba(16,185,129,0.15)]"
+                    >
+                      {linkCopied ? (
+                        <>
+                          <Check className="size-3.5" /> Copiado
+                        </>
+                      ) : (
+                        <>
+                          <Copy className="size-3.5" /> Copiar
+                        </>
+                      )}
+                    </button>
+                  </div>
+                )}
               </div>
             )}
 

@@ -90,16 +90,18 @@ serve(async (req: Request) => {
     const origin = req.headers.get('Origin') ?? req.headers.get('Referer') ?? ''
     const redirectTo = origin ? `${origin.replace(/\/$/, '')}/invite` : undefined
 
-    // Convite NATIVO: o Supabase cria o usuário (com invited_at) e dispara o
-    // email com o magic link. Requer SMTP configurado em Auth → Settings (o
-    // sender default é rate-limited e só pra teste).
-    const { error: inviteErr } = await supabase.auth.admin.inviteUserByEmail(
+    // Gera o magic link de convite SEM enviar email — não exige SMTP. O link é
+    // devolvido ao app, que mostra um "Copiar link" pro convidante compartilhar
+    // manualmente. generateLink cria o usuário (com invited_at) se não existir.
+    const { data: linkData, error: linkErr } = await supabase.auth.admin.generateLink({
+      type: 'invite',
       email,
-      redirectTo ? { redirectTo } : undefined,
-    )
-    if (inviteErr) {
-      // Ex.: email já registrado, ou SMTP não configurado.
-      return json({ error: `Falha ao enviar convite: ${inviteErr.message}` }, 400)
+      options: redirectTo ? { redirectTo } : undefined,
+    })
+    const inviteLink = linkData?.properties?.action_link
+    if (linkErr || !inviteLink) {
+      // Ex.: email já registrado como usuário ativo.
+      return json({ error: `Falha ao gerar convite: ${linkErr?.message ?? 'sem action_link'}` }, 400)
     }
 
     // Registra o convite pendente (pra TeamPage listar / owner revogar). O token
@@ -116,14 +118,21 @@ serve(async (req: Request) => {
       .single()
 
     if (insertErr) {
-      // O email já foi enviado; só o tracking falhou. Não é fatal.
-      return json({ ok: true, email, warning: `Convite enviado, mas o tracking falhou: ${insertErr.message}` })
+      // O link já foi gerado; só o tracking falhou. Não é fatal.
+      return json({
+        ok: true,
+        email,
+        role: inviteRole,
+        invite_link: inviteLink,
+        warning: `Convite gerado, mas o tracking falhou: ${insertErr.message}`,
+      })
     }
 
     return json({
       ok: true,
       email,
       role: inviteRole,
+      invite_link: inviteLink,
       invite_id: invite.id,
       expires_at: invite.expires_at,
     })

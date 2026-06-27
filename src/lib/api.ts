@@ -241,22 +241,44 @@ export async function createInvite(email: string): Promise<{
   ok: boolean
   email: string
   role?: string
+  invite_link?: string
   invite_id?: string
   expires_at?: string
+  warning?: string
 }> {
   const { data, error } = await supabase.functions.invoke('create-invite', {
     body: { email },
   })
-  if (error) throw new Error(`Falha ao criar convite: ${error.message}`)
+  if (error) throw new Error(await edgeErrorMessage(error, 'Falha ao criar convite'))
   if (data?.error) throw new Error(data.error)
   return data
+}
+
+/**
+ * supabase-js mascara o corpo da resposta em erros non-2xx (FunctionsHttpError),
+ * expondo só "Edge Function returned a non-2xx status code". Esta helper lê o
+ * corpo JSON da resposta original (error.context) pra recuperar a mensagem real
+ * que a Edge Function devolveu em `{ error: "..." }`.
+ */
+async function edgeErrorMessage(error: unknown, prefix: string): Promise<string> {
+  const ctx = (error as { context?: Response }).context
+  if (ctx && typeof ctx.json === 'function') {
+    try {
+      const body = await ctx.clone().json()
+      if (body?.error) return body.error
+    } catch {
+      /* corpo não-JSON — cai no fallback abaixo */
+    }
+  }
+  const msg = error instanceof Error ? error.message : String(error)
+  return `${prefix}: ${msg}`
 }
 
 export async function revokeInvite(inviteId: string): Promise<void> {
   const { data, error } = await supabase.functions.invoke('revoke-invite', {
     body: { invite_id: inviteId },
   })
-  if (error) throw new Error(`Falha ao revogar convite: ${error.message}`)
+  if (error) throw new Error(await edgeErrorMessage(error, 'Falha ao revogar convite'))
   if (data?.error) throw new Error(data.error)
 }
 

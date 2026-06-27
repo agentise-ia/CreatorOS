@@ -821,15 +821,19 @@ export default function ScriptDetailPage() {
                   </Badge>
                 </div>
                 {sourceInstagramUrl && (
-                  <Button asChild variant="outline" className="w-full">
-                    <a
-                      href={sourceInstagramUrl}
-                      target="_blank"
-                      rel="noopener noreferrer"
-                    >
-                      <ExternalLink className="size-4" />
-                      Ver no Instagram
-                    </a>
+                  <Button
+                    render={
+                      <a
+                        href={sourceInstagramUrl}
+                        target="_blank"
+                        rel="noopener noreferrer"
+                      />
+                    }
+                    variant="outline"
+                    className="w-full"
+                  >
+                    <ExternalLink className="size-4" />
+                    Ver no Instagram
                   </Button>
                 )}
               </>

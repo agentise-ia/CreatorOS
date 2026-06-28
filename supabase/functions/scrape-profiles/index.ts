@@ -84,18 +84,29 @@ async function fetchWithRetry(
 async function startApifyRun(username: string, apifyToken: string): Promise<{ runId: string; datasetId: string }> {
   const url = `https://api.apify.com/v2/acts/apify~instagram-reel-scraper/runs?token=${apifyToken}`
 
-  const response = await fetchWithRetry(url, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json' },
-    body: JSON.stringify({
-      username: [username],
-      resultsLimit: 50,
-    }),
-  })
+  // Instagram bloqueia proxies datacenter (logs: "Request blocked, retrying with
+  // different session", proxy 595). Proxy RESIDENCIAL é raramente bloqueado — é a
+  // correção definitiva. Se o plano/actor rejeitar o input, cai pro default.
+  const baseInput = { username: [username], resultsLimit: 50 }
+  const inputs = [
+    { ...baseInput, proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] } },
+    baseInput,
+  ]
 
-  if (!response.ok) {
-    const body = await response.text()
-    throw new Error(`Apify start run failed (${response.status}): ${body}`)
+  let response: Response | null = null
+  for (const input of inputs) {
+    response = await fetchWithRetry(url, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(input),
+    })
+    if (response.ok) break
+    log('warn', `Apify start falhou (${response.status}), tentando input alternativo`, { username })
+  }
+
+  if (!response || !response.ok) {
+    const body = response ? await response.text() : 'sem resposta'
+    throw new Error(`Apify start run failed (${response?.status ?? 'n/a'}): ${body}`)
   }
 
   const result = await response.json()

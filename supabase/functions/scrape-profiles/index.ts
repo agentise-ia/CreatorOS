@@ -102,7 +102,11 @@ async function startApifyRun(username: string, apifyToken: string): Promise<{ ru
   return { runId, datasetId }
 }
 
-async function waitForApifyRun(runId: string, apifyToken: string): Promise<void> {
+async function waitForApifyRun(
+  runId: string,
+  apifyToken: string,
+  onHeartbeat?: () => Promise<void>
+): Promise<void> {
   const startTime = Date.now()
 
   while (Date.now() - startTime < APIFY_TIMEOUT_MS) {
@@ -121,6 +125,12 @@ async function waitForApifyRun(runId: string, apifyToken: string): Promise<void>
     if (status === 'SUCCEEDED') return
     if (status === 'FAILED' || status === 'ABORTED' || status === 'TIMED-OUT') {
       throw new Error(`Apify run ${runId} ended with status: ${status}`)
+    }
+
+    // Heartbeat: bump o job (updated_at + progress) a cada poll para o watchdog
+    // do frontend não considerar o job travado enquanto o Apify ainda roda.
+    if (onHeartbeat) {
+      try { await onHeartbeat() } catch { /* heartbeat best-effort */ }
     }
 
     await new Promise((resolve) => setTimeout(resolve, APIFY_POLL_INTERVAL_MS))
@@ -326,8 +336,17 @@ async function processInBackground(
       const { runId, datasetId } = await startApifyRun(username, apifyToken)
       log('info', `Apify run started`, { runId, datasetId, username })
 
-      // 3. Wait for completion
-      await waitForApifyRun(runId, apifyToken)
+      // 3. Wait for completion — com heartbeat que faz o progresso "rastejar"
+      // dentro da fatia deste username, mantendo o job vivo pro watchdog.
+      const baseProgress = Math.round((processedCount / totalUsernames) * 100)
+      const nextProgress = Math.round(((processedCount + 1) / totalUsernames) * 100)
+      // Sobe até 85% da fatia, deixando os 15% finais para o trabalho real (fetch/insert).
+      const ceiling = baseProgress + Math.floor((nextProgress - baseProgress) * 0.85)
+      let heartbeatProgress = baseProgress
+      await waitForApifyRun(runId, apifyToken, async () => {
+        if (heartbeatProgress < ceiling) heartbeatProgress += 1
+        await updateJobProgress(supabase, jobId, heartbeatProgress)
+      })
       log('info', `Apify run completed`, { runId, username })
 
       // 4. Fetch results

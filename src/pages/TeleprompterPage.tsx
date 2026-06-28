@@ -147,11 +147,23 @@ export default function TeleprompterPage() {
     setCameraError(null)
     try {
       stopStream()
+      // No mobile pede retrato 9:16 (1080x1920) para o vídeo GRAVADO sair vertical —
+      // o track bruto da câmera, não o preview, é o que vai pro arquivo.
+      const videoConstraints: MediaTrackConstraints = isMobile
+        ? {
+            facingMode: { ideal: facing },
+            width: { ideal: 1080 },
+            height: { ideal: 1920 },
+            aspectRatio: { ideal: 9 / 16 },
+          }
+        : { facingMode: { ideal: facing } }
       const stream = await navigator.mediaDevices.getUserMedia({
-        video: { facingMode: { ideal: facing } },
+        video: videoConstraints,
         audio: false,
       }).catch(() =>
-        // fallback: alguns desktops não aceitam facingMode como constraint
+        // fallback: alguns navegadores rejeitam constraints estritas
+        navigator.mediaDevices.getUserMedia({ video: { facingMode: { ideal: facing } }, audio: false })
+      ).catch(() =>
         navigator.mediaDevices.getUserMedia({ video: true, audio: false })
       )
       streamRef.current = stream

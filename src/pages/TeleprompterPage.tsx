@@ -164,12 +164,12 @@ export default function TeleprompterPage() {
     setCameraError(null)
     try {
       stopStream()
-      // No mobile pede retrato 9:16 (1080x1920) para o vídeo GRAVADO sair vertical —
-      // o track bruto da câmera, não o preview, é o que vai pro arquivo.
-      const portrait = isMobile
-        ? { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } }
-        : {}
-      const videoConstraints: MediaTrackConstraints = { facingMode: { ideal: facing }, ...portrait }
+      // NÃO forçamos aspectRatio/resolução: pedir 9:16 fazia o navegador recortar
+      // o centro do sensor (que é ~4:3) e isso aparecia como ZOOM (perda de campo
+      // de visão). Usamos o campo de visão natural da câmera; no mobile em retrato
+      // o track já sai vertical. Pedimos só uma resolução alta como dica de qualidade.
+      const quality = isMobile ? { width: { ideal: 1920 }, height: { ideal: 1920 } } : {}
+      const videoConstraints: MediaTrackConstraints = { facingMode: { ideal: facing }, ...quality }
       let stream = await navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
         audio: false,
@@ -190,7 +190,7 @@ export default function TeleprompterPage() {
           if (mainId && mainId !== currentId) {
             stream.getTracks().forEach((t) => t.stop())
             stream = await navigator.mediaDevices.getUserMedia({
-              video: { deviceId: { exact: mainId }, ...portrait },
+              video: { deviceId: { exact: mainId } },
               audio: false,
             }).catch(() => navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false }))
           }

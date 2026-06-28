@@ -30,6 +30,19 @@ export async function scrapeProfile(
   return data as { job_id: string };
 }
 
+export async function deleteProfile(profileId: string): Promise<void> {
+  // reels, transcriptions, content_analyses e voice_profiles têm ON DELETE CASCADE
+  // a partir de profiles, então removê-lo limpa tudo que depende dele.
+  const { error } = await supabase
+    .from('profiles')
+    .delete()
+    .eq('id', profileId);
+
+  if (error) {
+    throw new Error(`Falha ao excluir perfil: ${error.message}`);
+  }
+}
+
 export async function cancelJob(jobId: string): Promise<void> {
   const { error } = await supabase
     .from('processing_jobs')

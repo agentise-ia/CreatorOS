@@ -1,12 +1,12 @@
 import { useState, useEffect, useRef } from 'react'
 import { useNavigate } from 'react-router-dom'
-import { Users, Download, Loader2, Mic, Check, X, AlertCircle, RotateCcw, BarChart3 } from 'lucide-react'
+import { Users, Download, Loader2, Mic, Check, X, AlertCircle, RotateCcw, BarChart3, Trash2 } from 'lucide-react'
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card'
 import { Badge } from '@/components/ui/badge'
 import { Button } from '@/components/ui/button'
 import { cn } from '@/lib/utils'
 import { useAppStore } from '@/store'
-import { scrapeProfile, generateVoiceProfile, cancelJob, analyzeContent } from '@/lib/api'
+import { scrapeProfile, generateVoiceProfile, cancelJob, analyzeContent, deleteProfile } from '@/lib/api'
 import { formatNumber, formatDate } from '@/lib/utils'
 import supabase from '@/lib/supabase'
 import type { Profile } from '@/types'
@@ -16,13 +16,19 @@ type ButtonStatus = 'idle' | 'starting' | 'processing' | 'success' | 'error'
 interface ProfileCardProps {
   profile: Profile
   onScrapeComplete?: () => void
+  onDeleted?: () => void
 }
 
-export function ProfileCard({ profile, onScrapeComplete }: ProfileCardProps) {
+export function ProfileCard({ profile, onScrapeComplete, onDeleted }: ProfileCardProps) {
   const navigate = useNavigate()
   const modelProvider = useAppStore((s) => s.modelProvider)
   const modelId = useAppStore((s) => s.modelId)
   const activeJobs = useAppStore((s) => s.activeJobs)
+  const removeProfile = useAppStore((s) => s.removeProfile)
+
+  const [confirmingDelete, setConfirmingDelete] = useState(false)
+  const [deleting, setDeleting] = useState(false)
+  const [deleteError, setDeleteError] = useState<string | null>(null)
 
   const [scrapeStatus, setScrapeStatus] = useState<ButtonStatus>('idle')
   const [voiceStatus, setVoiceStatus] = useState<ButtonStatus>('idle')
@@ -190,6 +196,21 @@ export function ProfileCard({ profile, onScrapeComplete }: ProfileCardProps) {
     }
   }
 
+  async function handleDelete(e: React.MouseEvent) {
+    e.stopPropagation()
+    setDeleting(true)
+    setDeleteError(null)
+    try {
+      await deleteProfile(profile.id)
+      removeProfile(profile.id)
+      onDeleted?.()
+    } catch (err) {
+      setDeleteError(err instanceof Error ? err.message : 'Erro ao excluir')
+      setDeleting(false)
+      setConfirmingDelete(false)
+    }
+  }
+
   async function handleCancel(e: React.MouseEvent, jobId: string) {
     e.stopPropagation()
     try {
@@ -310,9 +331,55 @@ export function ProfileCard({ profile, onScrapeComplete }: ProfileCardProps) {
           >
             {profile.profile_type === 'own' ? 'Meu Perfil' : 'Referência'}
           </Badge>
+          <button
+            type="button"
+            onClick={(e) => { e.stopPropagation(); setConfirmingDelete(true); setDeleteError(null) }}
+            disabled={deleting}
+            title="Excluir perfil"
+            aria-label="Excluir perfil"
+            className="flex size-7 shrink-0 items-center justify-center rounded-md text-muted-foreground transition-colors hover:bg-destructive/10 hover:text-destructive disabled:opacity-50"
+          >
+            <Trash2 className="size-4" />
+          </button>
         </div>
       </CardHeader>
       <CardContent className="space-y-3">
+        {/* Confirmação de exclusão */}
+        {confirmingDelete && (
+          <div className="space-y-2 rounded-lg border border-destructive/30 bg-destructive/5 p-2.5">
+            <p className="text-[11px] leading-tight text-foreground">
+              Excluir <span className="font-semibold">@{profile.instagram_username}</span>? Isso remove os reels, transcrições e análises deste perfil. Não pode ser desfeito.
+            </p>
+            <div className="flex gap-2">
+              <Button
+                variant="outline"
+                size="xs"
+                className="flex-1"
+                onClick={(e) => { e.stopPropagation(); setConfirmingDelete(false) }}
+                disabled={deleting}
+              >
+                Cancelar
+              </Button>
+              <Button
+                size="xs"
+                className="flex-1 bg-destructive text-white hover:bg-destructive/90"
+                onClick={handleDelete}
+                disabled={deleting}
+              >
+                {deleting ? <Loader2 className="size-3 animate-spin" /> : <Trash2 className="size-3" />}
+                Excluir
+              </Button>
+            </div>
+          </div>
+        )}
+
+        {deleteError && (
+          <div className="flex items-start gap-1.5 rounded bg-destructive/5 px-2 py-1">
+            <AlertCircle className="mt-0.5 size-3 shrink-0 text-destructive" />
+            <p className="text-[10px] leading-tight text-destructive line-clamp-2">{deleteError}</p>
+          </div>
+        )}
+
         <div className="flex items-center justify-between text-xs text-muted-foreground">
           <div className="flex items-center gap-1">
             <Users className="size-3.5" />

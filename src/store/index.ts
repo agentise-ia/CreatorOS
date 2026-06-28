@@ -22,6 +22,7 @@ interface AppState {
   profiles: Profile[]
   setProfiles: (profiles: Profile[]) => void
   addProfile: (profile: Profile) => void
+  removeProfile: (profileId: string) => void
 
   // Active jobs (from Supabase Realtime)
   activeJobs: ProcessingJob[]
@@ -58,6 +59,8 @@ export const useAppStore = create<AppState>()(
       setProfiles: (profiles) => set({ profiles }),
       addProfile: (profile) =>
         set((state) => ({ profiles: [...state.profiles, profile] })),
+      removeProfile: (profileId) =>
+        set((state) => ({ profiles: state.profiles.filter((p) => p.id !== profileId) })),
 
       // Active jobs
       activeJobs: [],

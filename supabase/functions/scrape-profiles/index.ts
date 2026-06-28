@@ -17,6 +17,8 @@ const USERNAME_REGEX = /^[a-zA-Z0-9._]{1,30}$/
 // bloqueio transitório do Instagram nos proxies — costuma resolver no retry.
 const MAX_APIFY_ATTEMPTS = 3
 const APIFY_RETRY_DELAY_MS = 12_000
+// Menos reels = menos requisições simultâneas no Instagram = menos bloqueio.
+const SCRAPE_RESULTS_LIMIT = 18
 
 interface ScrapeRequest {
   usernames: string[]
@@ -84,10 +86,11 @@ async function fetchWithRetry(
 async function startApifyRun(username: string, apifyToken: string): Promise<{ runId: string; datasetId: string }> {
   const url = `https://api.apify.com/v2/acts/apify~instagram-reel-scraper/runs?token=${apifyToken}`
 
-  // Instagram bloqueia proxies datacenter (logs: "Request blocked, retrying with
-  // different session", proxy 595). Proxy RESIDENCIAL é raramente bloqueado — é a
-  // correção definitiva. Se o plano/actor rejeitar o input, cai pro default.
-  const baseInput = { username: [username], resultsLimit: 50 }
+  // Proxy RESIDENCIAL (raramente bloqueado) + resultsLimit menor: o actor
+  // escala pra ~52 requisições simultâneas na GraphQL de detalhe e o Instagram
+  // bloqueia o burst. Pedindo menos reels, a concorrência cai e o bloqueio
+  // diminui drasticamente. Se o plano/actor rejeitar o input, cai pro default.
+  const baseInput = { username: [username], resultsLimit: SCRAPE_RESULTS_LIMIT }
   const inputs = [
     { ...baseInput, proxyConfiguration: { useApifyProxy: true, apifyProxyGroups: ['RESIDENTIAL'] } },
     baseInput,

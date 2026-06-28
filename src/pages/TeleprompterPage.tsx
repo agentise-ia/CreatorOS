@@ -1,6 +1,6 @@
 import { useState, useEffect, useRef } from 'react'
 import { useParams, useNavigate } from 'react-router-dom'
-import { X, Play, Pause, Minus, Plus, RotateCcw, Camera, CameraOff, SwitchCamera } from 'lucide-react'
+import { X, Play, Pause, Minus, Plus, RotateCcw, Camera, CameraOff, SwitchCamera, Circle, Square, Download } from 'lucide-react'
 import { Button } from '@/components/ui/button'
 import { useScript } from '@/hooks/useScripts'
 import { Loader2 } from 'lucide-react'
@@ -27,6 +27,105 @@ export default function TeleprompterPage() {
 
   const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
   const canFlip = isMobile || videoInputCount > 1
+
+  // Gravação de vídeo (câmera + microfone)
+  const recorderRef = useRef<MediaRecorder | null>(null)
+  const chunksRef = useRef<Blob[]>([])
+  const audioStreamRef = useRef<MediaStream | null>(null)
+  const recordedUrlRef = useRef<string | null>(null)
+  const [recording, setRecording] = useState(false)
+  const [recordedUrl, setRecordedUrl] = useState<string | null>(null)
+  const [recordExt, setRecordExt] = useState<'mp4' | 'webm'>('webm')
+  const [recordError, setRecordError] = useState<string | null>(null)
+
+  function pickMimeType(): { mimeType: string; ext: 'mp4' | 'webm' } {
+    const candidates: Array<{ mimeType: string; ext: 'mp4' | 'webm' }> = [
+      { mimeType: 'video/mp4;codecs=h264,aac', ext: 'mp4' },
+      { mimeType: 'video/webm;codecs=vp9,opus', ext: 'webm' },
+      { mimeType: 'video/webm;codecs=vp8,opus', ext: 'webm' },
+      { mimeType: 'video/webm', ext: 'webm' },
+    ]
+    for (const c of candidates) {
+      if (typeof MediaRecorder !== 'undefined' && MediaRecorder.isTypeSupported(c.mimeType)) return c
+    }
+    return { mimeType: '', ext: 'webm' }
+  }
+
+  function clearRecording() {
+    if (recordedUrlRef.current) {
+      URL.revokeObjectURL(recordedUrlRef.current)
+      recordedUrlRef.current = null
+    }
+    setRecordedUrl(null)
+  }
+
+  async function startRecording() {
+    setRecordError(null)
+    try {
+      // garante câmera ligada
+      if (!cameraOn || !streamRef.current) {
+        await startCamera(facingMode)
+      }
+      const camStream = streamRef.current
+      if (!camStream) throw new Error('camera')
+
+      // captura áudio do microfone só durante a gravação
+      let audioTracks: MediaStreamTrack[] = []
+      try {
+        const audio = await navigator.mediaDevices.getUserMedia({ audio: true })
+        audioStreamRef.current = audio
+        audioTracks = audio.getAudioTracks()
+      } catch {
+        // sem microfone — grava só o vídeo
+        audioTracks = []
+      }
+
+      const combined = new MediaStream([...camStream.getVideoTracks(), ...audioTracks])
+      const { mimeType, ext } = pickMimeType()
+      const recorder = new MediaRecorder(combined, mimeType ? { mimeType } : undefined)
+      chunksRef.current = []
+      recorder.ondataavailable = (e) => {
+        if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
+      }
+      recorder.onstop = () => {
+        const blob = new Blob(chunksRef.current, { type: mimeType || 'video/webm' })
+        clearRecording()
+        const url = URL.createObjectURL(blob)
+        recordedUrlRef.current = url
+        setRecordedUrl(url)
+        setRecordExt(ext)
+        // libera o microfone
+        if (audioStreamRef.current) {
+          audioStreamRef.current.getTracks().forEach((t) => t.stop())
+          audioStreamRef.current = null
+        }
+      }
+      recorderRef.current = recorder
+      recorder.start()
+      setRecording(true)
+    } catch {
+      setRecordError('Não foi possível iniciar a gravação. Verifique as permissões de câmera/microfone.')
+      setRecording(false)
+    }
+  }
+
+  function stopRecording() {
+    if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+      recorderRef.current.stop()
+    }
+    recorderRef.current = null
+    setRecording(false)
+  }
+
+  function downloadRecording() {
+    if (!recordedUrl) return
+    const a = document.createElement('a')
+    a.href = recordedUrl
+    a.download = `roteiro-${id ?? 'gravacao'}-${new Date().toISOString().slice(0, 19).replace(/[:T]/g, '-')}.${recordExt}`
+    document.body.appendChild(a)
+    a.click()
+    a.remove()
+  }
 
   function stopStream() {
     if (streamRef.current) {
@@ -79,9 +178,22 @@ export default function TeleprompterPage() {
     await startCamera(next)
   }
 
-  // Para a câmera ao desmontar
+  // Para câmera, gravação e microfone ao desmontar
   useEffect(() => {
-    return () => stopStream()
+    return () => {
+      if (recorderRef.current && recorderRef.current.state !== 'inactive') {
+        try { recorderRef.current.stop() } catch { /* ignore */ }
+      }
+      if (audioStreamRef.current) {
+        audioStreamRef.current.getTracks().forEach((t) => t.stop())
+        audioStreamRef.current = null
+      }
+      if (recordedUrlRef.current) {
+        URL.revokeObjectURL(recordedUrlRef.current)
+        recordedUrlRef.current = null
+      }
+      stopStream()
+    }
   }, [])
 
   useEffect(() => {
@@ -256,6 +368,40 @@ export default function TeleprompterPage() {
               <SwitchCamera className="size-4" />
             </Button>
           )}
+
+          {/* Gravação */}
+          {!recording ? (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-white hover:bg-white/10"
+              onClick={startRecording}
+              title="Gravar vídeo"
+            >
+              <Circle className="size-4 fill-red-500 text-red-500" />
+            </Button>
+          ) : (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="bg-red-500/20 text-red-400 hover:bg-red-500/30"
+              onClick={stopRecording}
+              title="Parar gravação"
+            >
+              <Square className="size-3.5 fill-current" />
+            </Button>
+          )}
+          {recordedUrl && !recording && (
+            <Button
+              variant="ghost"
+              size="icon-xs"
+              className="text-accent hover:bg-accent/10"
+              onClick={downloadRecording}
+              title="Baixar gravação"
+            >
+              <Download className="size-4" />
+            </Button>
+          )}
         </div>
 
         <div className="flex items-center gap-2">
@@ -273,10 +419,18 @@ export default function TeleprompterPage() {
         </div>
       </div>
 
-      {/* Erro de câmera */}
-      {cameraError && (
+      {/* Erros de câmera / gravação */}
+      {(cameraError || recordError) && (
         <div className="relative z-10 bg-destructive/20 px-4 py-1.5 text-center text-xs text-destructive-foreground">
-          {cameraError}
+          {cameraError ?? recordError}
+        </div>
+      )}
+
+      {/* Indicador REC */}
+      {recording && (
+        <div className="pointer-events-none absolute right-4 top-14 z-20 flex items-center gap-1.5 rounded-full bg-black/60 px-2.5 py-1 backdrop-blur-sm">
+          <span className="size-2 animate-pulse rounded-full bg-red-500" />
+          <span className="text-xs font-semibold text-white">REC</span>
         </div>
       )}
 

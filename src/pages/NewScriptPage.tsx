@@ -10,7 +10,7 @@ import { ModelSelector } from '@/components/shared/ModelSelector'
 import { useVoiceProfile } from '@/hooks/useVoiceProfile'
 import { useProfiles } from '@/hooks/useProfiles'
 import { useAppStore } from '@/store'
-import { generateScript, getJobStatus } from '@/lib/api'
+import { generateScript, getJobStatus, createManualScript } from '@/lib/api'
 import { cn, formatNumber } from '@/lib/utils'
 import supabase from '@/lib/supabase'
 import type { Reel } from '@/types'
@@ -28,7 +28,11 @@ export default function NewScriptPage() {
   const { voiceProfile } = useVoiceProfile()
   const { profiles } = useProfiles()
 
-  const [step, setStep] = useState<'select' | 'configure' | 'generating' | 'done'>('select')
+  const [step, setStep] = useState<'select' | 'configure' | 'generating' | 'done' | 'manual'>('select')
+  const [manualTitle, setManualTitle] = useState('')
+  const [manualText, setManualText] = useState('')
+  const [savingManual, setSavingManual] = useState(false)
+  const [manualError, setManualError] = useState<string | null>(null)
   const [selectedReel, setSelectedReel] = useState<ReelWithAnalysis | null>(null)
   const [topic, setTopic] = useState('')
   const [instructions, setInstructions] = useState('')
@@ -164,6 +168,22 @@ export default function NewScriptPage() {
     setGenerating(false)
   }
 
+  async function handleSaveManual() {
+    if (!manualText.trim()) {
+      setManualError('Cole o roteiro antes de salvar.')
+      return
+    }
+    setSavingManual(true)
+    setManualError(null)
+    try {
+      const { id } = await createManualScript({ title: manualTitle, teleprompterText: manualText })
+      navigate(`/scripts/${id}`)
+    } catch (err) {
+      setManualError(err instanceof Error ? err.message : 'Erro ao salvar roteiro')
+      setSavingManual(false)
+    }
+  }
+
   return (
     <div className="space-y-6">
       {/* Header */}
@@ -173,12 +193,12 @@ export default function NewScriptPage() {
             variant="ghost"
             size="sm"
             onClick={() => {
-              if (step === 'configure') setStep('select')
+              if (step === 'configure' || step === 'manual') setStep('select')
               else navigate('/scripts')
             }}
           >
             <ArrowLeft className="size-4" />
-            {step === 'configure' ? 'Voltar' : 'Roteiros'}
+            {step === 'configure' || step === 'manual' ? 'Voltar' : 'Roteiros'}
           </Button>
         )}
         <div>
@@ -188,6 +208,7 @@ export default function NewScriptPage() {
             {step === 'configure' && 'Configure e gere o roteiro'}
             {step === 'generating' && 'Gerando seu roteiro...'}
             {step === 'done' && 'Roteiro gerado com sucesso!'}
+            {step === 'manual' && 'Cole um roteiro já pronto'}
           </p>
         </div>
       </div>
@@ -195,6 +216,27 @@ export default function NewScriptPage() {
       {/* Step 1: Select viral reel */}
       {step === 'select' && (
         <>
+          {/* Atalho: roteiro avulso */}
+          <Card className="border-[rgba(59,130,246,0.2)]">
+            <CardContent className="flex flex-col gap-3 pt-4 sm:flex-row sm:items-center sm:justify-between">
+              <div className="flex items-center gap-3">
+                <div className="flex size-9 shrink-0 items-center justify-center rounded-lg bg-[rgba(59,130,246,0.1)] border border-[rgba(59,130,246,0.2)]">
+                  <FileText className="size-4 text-primary" />
+                </div>
+                <div>
+                  <p className="text-sm font-medium text-foreground">Já tem um roteiro pronto?</p>
+                  <p className="text-xs text-muted-foreground">
+                    Cole seu texto e use direto no teleprompter, sem gerar com IA.
+                  </p>
+                </div>
+              </div>
+              <Button variant="outline" size="sm" onClick={() => { setManualError(null); setStep('manual') }}>
+                <FileText className="size-3.5" />
+                Criar roteiro avulso
+              </Button>
+            </CardContent>
+          </Card>
+
           {loadingReels ? (
             <div className="flex items-center justify-center py-20">
               <Loader2 className="size-8 animate-spin text-primary" />
@@ -601,6 +643,55 @@ export default function NewScriptPage() {
                   Gerar outro
                 </Button>
               </div>
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* Step: Roteiro avulso */}
+      {step === 'manual' && (
+        <Card>
+          <CardContent className="space-y-4 pt-4">
+            <div className="space-y-2">
+              <Label htmlFor="manual-title">Título do roteiro</Label>
+              <Input
+                id="manual-title"
+                placeholder="Ex: 5 funcionalidades secretas do Claude"
+                value={manualTitle}
+                onChange={(e) => setManualTitle((e.target as HTMLInputElement).value)}
+              />
+            </div>
+
+            <div className="space-y-2">
+              <Label htmlFor="manual-text">Roteiro</Label>
+              <textarea
+                id="manual-text"
+                className="flex min-h-[280px] w-full rounded-lg border border-input bg-background px-3 py-2 text-sm leading-relaxed text-foreground placeholder:text-muted-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                placeholder="Cole aqui o texto do seu roteiro. Ele será usado no teleprompter exatamente como colado."
+                value={manualText}
+                onChange={(e) => setManualText(e.target.value)}
+                autoFocus
+              />
+              <p className="text-[10px] text-muted-foreground">
+                O texto é salvo como está, pronto para o teleprompter. Você pode editá-lo depois.
+              </p>
+            </div>
+
+            {manualError && (
+              <div className="flex items-start gap-1.5 rounded bg-destructive/5 px-2 py-1.5">
+                <AlertCircle className="mt-0.5 size-3 shrink-0 text-destructive" />
+                <p className="text-xs text-destructive">{manualError}</p>
+              </div>
+            )}
+
+            <div className="flex justify-end gap-2">
+              <Button variant="ghost" size="sm" onClick={() => setStep('select')} disabled={savingManual}>
+                Cancelar
+              </Button>
+              <Button size="sm" onClick={handleSaveManual} disabled={savingManual || !manualText.trim()}>
+                {savingManual ? <Loader2 className="size-4 animate-spin" /> : <FileText className="size-4" />}
+                Salvar roteiro
+              </Button>
             </div>
           </CardContent>
         </Card>

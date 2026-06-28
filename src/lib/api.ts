@@ -323,6 +323,51 @@ export async function acceptNativeInvite(): Promise<void> {
   if (error) throw new Error(`Falha ao aceitar convite: ${error.message}`)
 }
 
+export async function createManualScript(params: {
+  title: string;
+  teleprompterText: string;
+}): Promise<{ id: string }> {
+  const user_id = await getUserId();
+  const title = params.title.trim() || 'Roteiro avulso';
+
+  const { data: newScript, error } = await supabase
+    .from('scripts')
+    .insert({
+      user_id,
+      voice_profile_id: null,
+      topic: title,
+      reference_reel_ids: [],
+      additional_instructions: null,
+      title,
+      script_teleprompter: params.teleprompterText,
+      script_annotated: { sections: [] },
+      estimated_duration_seconds: null,
+      editing_report: {},
+      generation_model: 'manual',
+      viral_patterns_used: null,
+      status: 'draft',
+    })
+    .select('id')
+    .single();
+
+  if (error || !newScript) {
+    throw new Error(`Falha ao criar roteiro: ${error?.message}`);
+  }
+
+  // Versão inicial no histórico
+  await supabase.from('script_versions').insert({
+    script_id: newScript.id,
+    version_number: 1,
+    script_teleprompter: params.teleprompterText,
+    script_annotated: { sections: [] },
+    editing_report: {},
+    change_type: 'initial',
+    change_description: 'Roteiro avulso colado',
+  });
+
+  return newScript as { id: string };
+}
+
 export async function generateScript(params: {
   topic: string;
   voice_profile_id?: string;

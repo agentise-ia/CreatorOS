@@ -1,4 +1,4 @@
-import { useState } from 'react'
+import { useEffect, useState } from 'react'
 import { Outlet, useLocation } from 'react-router-dom'
 import { Sidebar } from '@/components/layout/Sidebar'
 import { Header } from '@/components/layout/Header'
@@ -29,8 +29,15 @@ function getPageTitle(pathname: string): string {
 
 export function MainLayout() {
   const [collapsed, setCollapsed] = useState(false)
+  const [mobileOpen, setMobileOpen] = useState(false)
   const location = useLocation()
   const title = getPageTitle(location.pathname)
+
+  // Fecha o drawer mobile ao navegar
+  useEffect(() => {
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    setMobileOpen(false)
+  }, [location.pathname])
 
   // Mounts the global Realtime subscription that keeps activeJobs in sync.
   // Without this, pages that derive UI from activeJobs (Voice Profile scrape
@@ -39,15 +46,20 @@ export function MainLayout() {
 
   return (
     <div className="min-h-screen">
-      <Sidebar collapsed={collapsed} onToggle={() => setCollapsed((c) => !c)} />
+      <Sidebar
+        collapsed={collapsed}
+        onToggle={() => setCollapsed((c) => !c)}
+        mobileOpen={mobileOpen}
+        onMobileClose={() => setMobileOpen(false)}
+      />
       <div
         className={cn(
           'flex min-h-screen flex-col transition-all duration-200',
-          collapsed ? 'ml-16' : 'ml-60'
+          collapsed ? 'lg:ml-16' : 'lg:ml-60'
         )}
       >
-        <Header title={title} />
-        <main className="flex-1 p-6">
+        <Header title={title} onMenuClick={() => setMobileOpen(true)} />
+        <main className="flex-1 p-4 sm:p-6">
           <Outlet />
         </main>
       </div>

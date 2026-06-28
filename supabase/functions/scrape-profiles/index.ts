@@ -13,6 +13,10 @@ const APIFY_POLL_INTERVAL_MS = 5_000
 const APIFY_TIMEOUT_MS = 10 * 60 * 1_000 // 10 minutes
 const MAX_USERNAMES_PER_JOB = 10
 const USERNAME_REGEX = /^[a-zA-Z0-9._]{1,30}$/
+// Quando o Apify devolve vazio/erro ("Empty or private data..."), normalmente é
+// bloqueio transitório do Instagram nos proxies — costuma resolver no retry.
+const MAX_APIFY_ATTEMPTS = 3
+const APIFY_RETRY_DELAY_MS = 12_000
 
 interface ScrapeRequest {
   usernames: string[]
@@ -151,6 +155,48 @@ async function fetchApifyDataset(datasetId: string, apifyToken: string): Promise
   }
 
   return await response.json()
+}
+
+// Roda o actor do Apify para um username, com retry quando o resultado vem
+// vazio ou com erro ("Empty or private data...") — geralmente bloqueio
+// transitório do Instagram. O heartbeat mantém o job vivo durante tudo.
+async function runApifyForUsername(
+  username: string,
+  apifyToken: string,
+  heartbeat: () => Promise<void>
+): Promise<{ validItems: ApifyReelItem[]; errorReason: string | null }> {
+  let lastReason: string | null = null
+
+  for (let attempt = 1; attempt <= MAX_APIFY_ATTEMPTS; attempt++) {
+    const { runId, datasetId } = await startApifyRun(username, apifyToken)
+    log('info', `Apify run iniciado (tentativa ${attempt}/${MAX_APIFY_ATTEMPTS})`, { runId, username })
+
+    await waitForApifyRun(runId, apifyToken, heartbeat)
+    const items = await fetchApifyDataset(datasetId, apifyToken)
+
+    const validItems = items.filter((it) => it.id != null)
+    if (validItems.length > 0) {
+      log('info', `Apify retornou ${validItems.length} reels`, { username, attempt })
+      return { validItems, errorReason: null }
+    }
+
+    const apifyError = items.find((it) => it.error || it.errorDescription)
+    lastReason = apifyError
+      ? (apifyError.errorDescription ?? apifyError.error ?? 'erro desconhecido')
+      : 'nenhum reel retornado'
+    log('warn', `Apify vazio/erro para ${username}`, { attempt, reason: lastReason })
+
+    // Espera com heartbeat antes de tentar de novo (não na última tentativa).
+    if (attempt < MAX_APIFY_ATTEMPTS) {
+      const ticks = Math.ceil(APIFY_RETRY_DELAY_MS / APIFY_POLL_INTERVAL_MS)
+      for (let t = 0; t < ticks; t++) {
+        await heartbeat()
+        await new Promise((r) => setTimeout(r, APIFY_POLL_INTERVAL_MS))
+      }
+    }
+  }
+
+  return { validItems: [], errorReason: lastReason }
 }
 
 async function upsertProfile(
@@ -342,43 +388,27 @@ async function processInBackground(
       const profileId = await upsertProfile(supabase, userId, username, profileType)
       log('info', `Profile upserted: ${profileId}`, { username })
 
-      // 2. Start Apify run
-      const { runId, datasetId } = await startApifyRun(username, apifyToken)
-      log('info', `Apify run started`, { runId, datasetId, username })
-
-      // 3. Wait for completion — com heartbeat que faz o progresso "rastejar"
-      // dentro da fatia deste username, mantendo o job vivo pro watchdog.
+      // 2-4. Roda o Apify com retry, mantendo o progresso "rastejando" na fatia
+      // deste username (mantém o job vivo pro watchdog).
       const baseProgress = Math.round((processedCount / totalUsernames) * 100)
       const nextProgress = Math.round(((processedCount + 1) / totalUsernames) * 100)
-      // Sobe até 85% da fatia, deixando os 15% finais para o trabalho real (fetch/insert).
+      // Sobe até 85% da fatia, deixando os 15% finais para o trabalho real (insert).
       const ceiling = baseProgress + Math.floor((nextProgress - baseProgress) * 0.85)
       let heartbeatProgress = baseProgress
-      await waitForApifyRun(runId, apifyToken, async () => {
+      const heartbeat = async () => {
         if (heartbeatProgress < ceiling) heartbeatProgress += 1
         await updateJobProgress(supabase, jobId, heartbeatProgress)
-      })
-      log('info', `Apify run completed`, { runId, username })
-
-      // 4. Fetch results
-      const items = await fetchApifyDataset(datasetId, apifyToken)
-      log('info', `Fetched ${items.length} reels`, { username })
-
-      // 4b. Detecta item de erro do Apify (perfil privado/inexistente)
-      const apifyError = items.find((it) => it.error || it.errorDescription)
-      if (apifyError) {
-        const reason = apifyError.errorDescription ?? apifyError.error ?? 'erro desconhecido'
-        log('warn', `Apify retornou erro para ${username}`, { reason })
-        failures.push(`@${username}: ${reason}`)
-        processedCount++
-        await updateJobProgress(supabase, jobId, Math.round((processedCount / totalUsernames) * 100))
-        continue
       }
 
-      // 4c. Sem reels válidos = perfil privado, sem reels, ou @ errado
-      const validItems = items.filter((it) => it.id != null)
+      const { validItems, errorReason } = await runApifyForUsername(username, apifyToken, heartbeat)
+
       if (validItems.length === 0) {
-        log('warn', `Nenhum reel válido para ${username}`)
-        failures.push(`@${username}: nenhum reel encontrado (perfil pode ser privado, sem reels, ou o @ está incorreto)`)
+        const reason = errorReason ?? 'nenhum reel encontrado'
+        const friendly = /private|empty|vazio/i.test(reason)
+          ? 'não foi possível extrair os reels. O Instagram pode estar bloqueando temporariamente, o perfil pode ser privado/sem reels, ou os créditos do Apify acabaram. Tente novamente em alguns minutos.'
+          : reason
+        log('warn', `Falha ao extrair ${username} após ${MAX_APIFY_ATTEMPTS} tentativas`, { reason })
+        failures.push(`@${username}: ${friendly}`)
         processedCount++
         await updateJobProgress(supabase, jobId, Math.round((processedCount / totalUsernames) * 100))
         continue

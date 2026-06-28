@@ -39,8 +39,13 @@ export default function TeleprompterPage() {
   const [recordError, setRecordError] = useState<string | null>(null)
 
   function pickMimeType(): { mimeType: string; ext: 'mp4' | 'webm' } {
+    // Prioriza MP4 (reproduzível direto no iOS/Android e galeria do celular).
+    // Só cai pra webm se o navegador não suportar nenhum container MP4.
     const candidates: Array<{ mimeType: string; ext: 'mp4' | 'webm' }> = [
+      { mimeType: 'video/mp4;codecs=avc1.42E01E,mp4a.40.2', ext: 'mp4' },
       { mimeType: 'video/mp4;codecs=h264,aac', ext: 'mp4' },
+      { mimeType: 'video/mp4;codecs=avc1', ext: 'mp4' },
+      { mimeType: 'video/mp4', ext: 'mp4' },
       { mimeType: 'video/webm;codecs=vp9,opus', ext: 'webm' },
       { mimeType: 'video/webm;codecs=vp8,opus', ext: 'webm' },
       { mimeType: 'video/webm', ext: 'webm' },
@@ -81,19 +86,22 @@ export default function TeleprompterPage() {
       }
 
       const combined = new MediaStream([...camStream.getVideoTracks(), ...audioTracks])
-      const { mimeType, ext } = pickMimeType()
+      const { mimeType } = pickMimeType()
       const recorder = new MediaRecorder(combined, mimeType ? { mimeType } : undefined)
+      // Tipo real usado pelo navegador (pode diferir do pedido).
+      const actualType = recorder.mimeType || mimeType || 'video/webm'
+      const actualExt: 'mp4' | 'webm' = actualType.includes('mp4') ? 'mp4' : 'webm'
       chunksRef.current = []
       recorder.ondataavailable = (e) => {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
       }
       recorder.onstop = () => {
-        const blob = new Blob(chunksRef.current, { type: mimeType || 'video/webm' })
+        const blob = new Blob(chunksRef.current, { type: actualType })
         clearRecording()
         const url = URL.createObjectURL(blob)
         recordedUrlRef.current = url
         setRecordedUrl(url)
-        setRecordExt(ext)
+        setRecordExt(actualExt)
         // libera o microfone
         if (audioStreamRef.current) {
           audioStreamRef.current.getTracks().forEach((t) => t.stop())
@@ -351,21 +359,21 @@ export default function TeleprompterPage() {
           <Button
             variant="ghost"
             size="icon-xs"
-            className={cn('text-white hover:bg-white/10', cameraOn && 'bg-primary/20 text-primary')}
+            className={cn('size-9 sm:size-6', 'text-white hover:bg-white/10', cameraOn && 'bg-primary/20 text-primary')}
             onClick={toggleCamera}
             title={cameraOn ? 'Desligar câmera' : 'Ligar câmera'}
           >
-            {cameraOn ? <Camera className="size-4" /> : <CameraOff className="size-4" />}
+            {cameraOn ? <Camera className="size-5 sm:size-4" /> : <CameraOff className="size-5 sm:size-4" />}
           </Button>
           {cameraOn && canFlip && (
             <Button
               variant="ghost"
               size="icon-xs"
-              className="text-white hover:bg-white/10"
+              className="size-9 text-white hover:bg-white/10 sm:size-6"
               onClick={flipCamera}
               title="Alternar câmera (frontal/traseira)"
             >
-              <SwitchCamera className="size-4" />
+              <SwitchCamera className="size-5 sm:size-4" />
             </Button>
           )}
 
@@ -374,32 +382,32 @@ export default function TeleprompterPage() {
             <Button
               variant="ghost"
               size="icon-xs"
-              className="text-white hover:bg-white/10"
+              className="size-9 text-white hover:bg-white/10 sm:size-6"
               onClick={startRecording}
               title="Gravar vídeo"
             >
-              <Circle className="size-4 fill-red-500 text-red-500" />
+              <Circle className="size-5 fill-red-500 text-red-500 sm:size-4" />
             </Button>
           ) : (
             <Button
               variant="ghost"
               size="icon-xs"
-              className="bg-red-500/20 text-red-400 hover:bg-red-500/30"
+              className="size-9 bg-red-500/20 text-red-400 hover:bg-red-500/30 sm:size-6"
               onClick={stopRecording}
               title="Parar gravação"
             >
-              <Square className="size-3.5 fill-current" />
+              <Square className="size-4 fill-current sm:size-3.5" />
             </Button>
           )}
           {recordedUrl && !recording && (
             <Button
               variant="ghost"
               size="icon-xs"
-              className="text-accent hover:bg-accent/10"
+              className="size-9 text-accent hover:bg-accent/10 sm:size-6"
               onClick={downloadRecording}
               title="Baixar gravação"
             >
-              <Download className="size-4" />
+              <Download className="size-5 sm:size-4" />
             </Button>
           )}
         </div>

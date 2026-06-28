@@ -279,8 +279,8 @@ export default function TeleprompterPage() {
       {cameraOn && <div className="pointer-events-none absolute inset-0 bg-black/45" />}
 
       {/* Controls bar */}
-      <div className="relative z-10 flex items-center justify-between border-b border-white/10 bg-black/40 px-4 py-2 backdrop-blur-sm">
-        <div className="flex items-center gap-2">
+      <div className="relative z-10 flex items-center justify-between gap-2 border-b border-white/10 bg-black/40 px-3 py-2 backdrop-blur-sm sm:px-4">
+        <div className="flex flex-wrap items-center gap-1.5 sm:gap-2">
           <Button
             variant="ghost"
             size="icon-xs"
@@ -405,7 +405,7 @@ export default function TeleprompterPage() {
         </div>
 
         <div className="flex items-center gap-2">
-          <span className="text-xs text-white/40">
+          <span className="hidden text-xs text-white/40 lg:inline">
             Space: play/pause · Arrows: velocidade · R: reset · Esc: sair
           </span>
           <Button

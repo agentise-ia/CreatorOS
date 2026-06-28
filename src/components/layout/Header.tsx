@@ -1,4 +1,4 @@
-import { LogOut, Loader2 } from 'lucide-react'
+import { LogOut, Loader2, Menu } from 'lucide-react'
 import supabase from '@/lib/supabase'
 import { useAppStore } from '@/store'
 import { Button } from '@/components/ui/button'
@@ -6,9 +6,10 @@ import { Avatar, AvatarFallback } from '@/components/ui/avatar'
 
 interface HeaderProps {
   title: string
+  onMenuClick?: () => void
 }
 
-export function Header({ title }: HeaderProps) {
+export function Header({ title, onMenuClick }: HeaderProps) {
   const user = useAppStore((s) => s.user)
   const activeJobs = useAppStore((s) => s.activeJobs)
   const activeCount = activeJobs.filter(
@@ -24,10 +25,21 @@ export function Header({ title }: HeaderProps) {
   }
 
   return (
-    <header className="flex h-16 items-center justify-between glass-header px-6">
-      <h1 className="text-lg font-semibold text-foreground">{title}</h1>
+    <header className="flex h-16 items-center justify-between glass-header px-4 sm:px-6">
+      <div className="flex min-w-0 items-center gap-2">
+        <Button
+          variant="ghost"
+          size="icon"
+          onClick={onMenuClick}
+          aria-label="Abrir menu"
+          className="size-8 shrink-0 text-muted-foreground hover:text-[#60A5FA] hover:bg-[rgba(59,130,246,0.08)] lg:hidden"
+        >
+          <Menu className="size-5" />
+        </Button>
+        <h1 className="truncate text-base font-semibold text-foreground sm:text-lg">{title}</h1>
+      </div>
 
-      <div className="flex items-center gap-4">
+      <div className="flex items-center gap-2 sm:gap-4">
         {/* Processing jobs indicator */}
         {activeCount > 0 && (
           <div className="flex items-center gap-2 rounded-full bg-[rgba(59,130,246,0.1)] border border-[rgba(59,130,246,0.2)] px-3 py-1">

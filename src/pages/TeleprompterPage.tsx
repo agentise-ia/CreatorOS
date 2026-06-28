@@ -26,7 +26,24 @@ export default function TeleprompterPage() {
   const [videoInputCount, setVideoInputCount] = useState(0)
 
   const isMobile = typeof navigator !== 'undefined' && /Mobi|Android|iPhone|iPad|iPod/i.test(navigator.userAgent)
+  const isIOS = typeof navigator !== 'undefined' &&
+    (/iPhone|iPad|iPod/i.test(navigator.userAgent) ||
+      // iPadOS 13+ se identifica como Mac com touch
+      (navigator.platform === 'MacIntel' && navigator.maxTouchPoints > 1))
   const canFlip = isMobile || videoInputCount > 1
+
+  // No iOS, facingMode 'environment' costuma cair na ultra-wide (0.5x) ou num
+  // device "virtual" (dupla/tripla) que inicia na 0.5x. Seleciona a câmera
+  // traseira PRINCIPAL (1.0x) pelo label, evitando ultra-wide/telephoto.
+  function pickMainBackCameraId(devices: MediaDeviceInfo[]): string | null {
+    const vids = devices.filter((d) => d.kind === 'videoinput' && d.label)
+    const back = vids.filter((d) => /back|traseira|rear|trás/i.test(d.label))
+    const pool = back.length > 0 ? back : vids
+    // Evita lentes secundárias e devices virtuais combinados.
+    const AVOID = /ultra|wide|angular|tele|teleobjetiva|dual|dupla|tripl/i
+    const main = pool.find((d) => !AVOID.test(d.label))
+    return (main ?? pool[0])?.deviceId ?? null
+  }
 
   // Gravação de vídeo (câmera + microfone)
   const recorderRef = useRef<MediaRecorder | null>(null)
@@ -149,15 +166,11 @@ export default function TeleprompterPage() {
       stopStream()
       // No mobile pede retrato 9:16 (1080x1920) para o vídeo GRAVADO sair vertical —
       // o track bruto da câmera, não o preview, é o que vai pro arquivo.
-      const videoConstraints: MediaTrackConstraints = isMobile
-        ? {
-            facingMode: { ideal: facing },
-            width: { ideal: 1080 },
-            height: { ideal: 1920 },
-            aspectRatio: { ideal: 9 / 16 },
-          }
-        : { facingMode: { ideal: facing } }
-      const stream = await navigator.mediaDevices.getUserMedia({
+      const portrait = isMobile
+        ? { width: { ideal: 1080 }, height: { ideal: 1920 }, aspectRatio: { ideal: 9 / 16 } }
+        : {}
+      const videoConstraints: MediaTrackConstraints = { facingMode: { ideal: facing }, ...portrait }
+      let stream = await navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
         audio: false,
       }).catch(() =>
@@ -166,6 +179,23 @@ export default function TeleprompterPage() {
       ).catch(() =>
         navigator.mediaDevices.getUserMedia({ video: true, audio: false })
       )
+
+      // iOS + câmera traseira: força a câmera principal (1.0x) pelo deviceId,
+      // já que facingMode tende a escolher a ultra-wide 0.5x.
+      if (isIOS && facing === 'environment') {
+        try {
+          const devices = await navigator.mediaDevices.enumerateDevices()
+          const mainId = pickMainBackCameraId(devices)
+          const currentId = stream.getVideoTracks()[0]?.getSettings?.().deviceId
+          if (mainId && mainId !== currentId) {
+            stream.getTracks().forEach((t) => t.stop())
+            stream = await navigator.mediaDevices.getUserMedia({
+              video: { deviceId: { exact: mainId }, ...portrait },
+              audio: false,
+            }).catch(() => navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false }))
+          }
+        } catch { /* mantém o stream original */ }
+      }
       streamRef.current = stream
       if (videoRef.current) {
         videoRef.current.srcObject = stream

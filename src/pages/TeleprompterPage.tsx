@@ -39,8 +39,13 @@ export default function TeleprompterPage() {
     const vids = devices.filter((d) => d.kind === 'videoinput' && d.label)
     const back = vids.filter((d) => /back|traseira|rear|trás/i.test(d.label))
     const pool = back.length > 0 ? back : vids
-    // Evita lentes secundárias e devices virtuais combinados.
-    const AVOID = /ultra|wide|angular|tele|teleobjetiva|dual|dupla|tripl/i
+    // SÓ evitamos a ultra-wide (0.5x) e a telephoto. As câmeras "Dual/Triple/Wide"
+    // são devices virtuais que iniciam na lente WIDE 1.0x — essas servem.
+    const AVOID = /ultra|angular|tele|teleobjetiva/i
+    // 1) "Back Camera" / "Câmera traseira" exata (a wide principal)
+    const exact = pool.find((d) => /^(back camera|câmera traseira|rear camera)$/i.test(d.label.trim()))
+    if (exact) return exact.deviceId
+    // 2) qualquer traseira que não seja ultra-wide/telephoto (dual/triple/wide ok)
     const main = pool.find((d) => !AVOID.test(d.label))
     return (main ?? pool[0])?.deviceId ?? null
   }
@@ -50,6 +55,12 @@ export default function TeleprompterPage() {
   const chunksRef = useRef<Blob[]>([])
   const audioStreamRef = useRef<MediaStream | null>(null)
   const recordedUrlRef = useRef<string | null>(null)
+  // Composição via canvas: grava sempre em 9:16 (1080x1920), sem depender da
+  // proporção/zoom do sensor. O frame da câmera é desenhado em "cover" (igual ao
+  // preview), garantindo o formato vertical sem o zoom do crop por aspectRatio.
+  const canvasRef = useRef<HTMLCanvasElement | null>(null)
+  const rafRef = useRef<number>(0)
+  const canvasStreamRef = useRef<MediaStream | null>(null)
   const [recording, setRecording] = useState(false)
   const [recordedUrl, setRecordedUrl] = useState<string | null>(null)
   const [recordExt, setRecordExt] = useState<'mp4' | 'webm'>('webm')
@@ -102,7 +113,42 @@ export default function TeleprompterPage() {
         audioTracks = []
       }
 
-      const combined = new MediaStream([...camStream.getVideoTracks(), ...audioTracks])
+      // Monta um canvas 9:16 e desenha o frame da câmera em "cover" (igual ao
+      // preview). Gravamos o stream do canvas → saída sempre 1080x1920 vertical.
+      const CW = 1080, CH = 1920
+      const canvas = canvasRef.current ?? document.createElement('canvas')
+      canvas.width = CW
+      canvas.height = CH
+      canvasRef.current = canvas
+      const ctx = canvas.getContext('2d')
+      const srcVideo = videoRef.current
+      const mirror = facingMode === 'user'
+
+      const drawFrame = () => {
+        if (ctx && srcVideo && srcVideo.videoWidth > 0) {
+          const vw = srcVideo.videoWidth
+          const vh = srcVideo.videoHeight
+          const scale = Math.max(CW / vw, CH / vh) // cover
+          const dw = vw * scale
+          const dh = vh * scale
+          const dx = (CW - dw) / 2
+          const dy = (CH - dh) / 2
+          ctx.save()
+          if (mirror) {
+            ctx.translate(CW, 0)
+            ctx.scale(-1, 1)
+          }
+          ctx.drawImage(srcVideo, dx, dy, dw, dh)
+          ctx.restore()
+        }
+        rafRef.current = requestAnimationFrame(drawFrame)
+      }
+      drawFrame()
+
+      const canvasStream = (canvas as HTMLCanvasElement & { captureStream: (fps?: number) => MediaStream }).captureStream(30)
+      canvasStreamRef.current = canvasStream
+
+      const combined = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks])
       const { mimeType } = pickMimeType()
       const recorder = new MediaRecorder(combined, mimeType ? { mimeType } : undefined)
       // Tipo real usado pelo navegador (pode diferir do pedido).
@@ -113,6 +159,12 @@ export default function TeleprompterPage() {
         if (e.data && e.data.size > 0) chunksRef.current.push(e.data)
       }
       recorder.onstop = () => {
+        // para o loop de desenho e o stream do canvas
+        cancelAnimationFrame(rafRef.current)
+        if (canvasStreamRef.current) {
+          canvasStreamRef.current.getTracks().forEach((t) => t.stop())
+          canvasStreamRef.current = null
+        }
         const blob = new Blob(chunksRef.current, { type: actualType })
         clearRecording()
         const url = URL.createObjectURL(blob)
@@ -233,6 +285,11 @@ export default function TeleprompterPage() {
     return () => {
       if (recorderRef.current && recorderRef.current.state !== 'inactive') {
         try { recorderRef.current.stop() } catch { /* ignore */ }
+      }
+      cancelAnimationFrame(rafRef.current)
+      if (canvasStreamRef.current) {
+        canvasStreamRef.current.getTracks().forEach((t) => t.stop())
+        canvasStreamRef.current = null
       }
       if (audioStreamRef.current) {
         audioStreamRef.current.getTracks().forEach((t) => t.stop())

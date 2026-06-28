@@ -39,6 +39,9 @@ interface ApifyReelItem {
   mentions?: string[]
   timestamp?: string
   ownerUsername?: string
+  // Itens de erro que o Apify às vezes retorna no dataset (perfil privado/inexistente)
+  error?: string
+  errorDescription?: string
 }
 
 function log(level: string, message: string, data?: Record<string, unknown>) {
@@ -233,7 +236,8 @@ async function downloadThumbnailToStorage(
 async function insertReels(
   supabase: SupabaseClient,
   profileId: string,
-  items: ApifyReelItem[]
+  items: ApifyReelItem[],
+  onBatch?: (done: number, total: number) => Promise<void>
 ): Promise<number> {
   // Process in concurrent batches: each item downloads its thumb and upserts
   // independently. Limit concurrency to avoid hammering Instagram CDN /
@@ -289,6 +293,11 @@ async function insertReels(
     for (const r of results) {
       if (r.status === 'fulfilled' && r.value) insertedCount++
     }
+    // Heartbeat: mantém o job vivo pro watchdog durante a inserção (download de
+    // thumbnails de até 50 reels pode passar de 4 min).
+    if (onBatch) {
+      try { await onBatch(Math.min(i + BATCH_SIZE, items.length), items.length) } catch { /* best-effort */ }
+    }
   }
 
   return insertedCount
@@ -324,6 +333,7 @@ async function processInBackground(
     const totalUsernames = usernames.length
     let processedCount = 0
     let totalReels = 0
+    const failures: string[] = []
 
     for (const username of usernames) {
       log('info', `Processing username: ${username}`, { jobId })
@@ -353,10 +363,38 @@ async function processInBackground(
       const items = await fetchApifyDataset(datasetId, apifyToken)
       log('info', `Fetched ${items.length} reels`, { username })
 
-      // 5. Insert reels
-      const insertedCount = await insertReels(supabase, profileId, items)
+      // 4b. Detecta item de erro do Apify (perfil privado/inexistente)
+      const apifyError = items.find((it) => it.error || it.errorDescription)
+      if (apifyError) {
+        const reason = apifyError.errorDescription ?? apifyError.error ?? 'erro desconhecido'
+        log('warn', `Apify retornou erro para ${username}`, { reason })
+        failures.push(`@${username}: ${reason}`)
+        processedCount++
+        await updateJobProgress(supabase, jobId, Math.round((processedCount / totalUsernames) * 100))
+        continue
+      }
+
+      // 4c. Sem reels válidos = perfil privado, sem reels, ou @ errado
+      const validItems = items.filter((it) => it.id != null)
+      if (validItems.length === 0) {
+        log('warn', `Nenhum reel válido para ${username}`)
+        failures.push(`@${username}: nenhum reel encontrado (perfil pode ser privado, sem reels, ou o @ está incorreto)`)
+        processedCount++
+        await updateJobProgress(supabase, jobId, Math.round((processedCount / totalUsernames) * 100))
+        continue
+      }
+
+      // 5. Insert reels — com heartbeat por batch (passos finais da fatia: ceiling→nextProgress)
+      const insertedCount = await insertReels(supabase, profileId, validItems, async (done, total) => {
+        const p = ceiling + Math.round((nextProgress - ceiling) * (done / total))
+        await updateJobProgress(supabase, jobId, p)
+      })
       totalReels += insertedCount
       log('info', `Inserted ${insertedCount} reels`, { username })
+
+      if (insertedCount === 0) {
+        failures.push(`@${username}: ${validItems.length} reels retornados mas nenhum pôde ser salvo`)
+      }
 
       // 6. Update profile last_scraped_at
       await supabase
@@ -370,19 +408,32 @@ async function processInBackground(
       await updateJobProgress(supabase, jobId, progress)
     }
 
+    // Se nenhum reel foi salvo em nenhum perfil, falha com mensagem clara.
+    if (totalReels === 0) {
+      throw new Error(
+        failures.length > 0
+          ? failures.join(' · ')
+          : 'Nenhum reel foi extraído. Verifique se o(s) perfil(is) são públicos e têm reels.'
+      )
+    }
+
     // Mark job as completed (no-op if user already cancelled)
     await supabase
       .from('processing_jobs')
       .update({
         status: 'completed',
         progress: 100,
-        output_data: { total_reels: totalReels, usernames_processed: usernames },
+        output_data: {
+          total_reels: totalReels,
+          usernames_processed: usernames,
+          failures: failures.length > 0 ? failures : undefined,
+        },
         completed_at: new Date().toISOString(),
       })
       .eq('id', jobId)
       .in('status', ['pending', 'processing'])
 
-    log('info', `Job completed successfully`, { jobId, totalReels })
+    log('info', `Job completed successfully`, { jobId, totalReels, failures })
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error)
     log('error', `Job failed`, { jobId, error: errorMessage })

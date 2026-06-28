@@ -6,6 +6,9 @@ import { useScript } from '@/hooks/useScripts'
 import { Loader2 } from 'lucide-react'
 import { cn } from '@/lib/utils'
 
+// FPS da gravação da câmera (frontal e traseira).
+const RECORD_FPS = 30
+
 export default function TeleprompterPage() {
   const { id } = useParams<{ id: string }>()
   const navigate = useNavigate()
@@ -145,7 +148,7 @@ export default function TeleprompterPage() {
       }
       drawFrame()
 
-      const canvasStream = (canvas as HTMLCanvasElement & { captureStream: (fps?: number) => MediaStream }).captureStream(30)
+      const canvasStream = (canvas as HTMLCanvasElement & { captureStream: (fps?: number) => MediaStream }).captureStream(RECORD_FPS)
       canvasStreamRef.current = canvasStream
 
       const combined = new MediaStream([...canvasStream.getVideoTracks(), ...audioTracks])
@@ -221,7 +224,12 @@ export default function TeleprompterPage() {
       // de visão). Usamos o campo de visão natural da câmera; no mobile em retrato
       // o track já sai vertical. Pedimos só uma resolução alta como dica de qualidade.
       const quality = isMobile ? { width: { ideal: 1920 }, height: { ideal: 1920 } } : {}
-      const videoConstraints: MediaTrackConstraints = { facingMode: { ideal: facing }, ...quality }
+      // Grava a 30fps (frontal e traseira).
+      const videoConstraints: MediaTrackConstraints = {
+        facingMode: { ideal: facing },
+        frameRate: { ideal: RECORD_FPS },
+        ...quality,
+      }
       let stream = await navigator.mediaDevices.getUserMedia({
         video: videoConstraints,
         audio: false,
@@ -242,7 +250,7 @@ export default function TeleprompterPage() {
           if (mainId && mainId !== currentId) {
             stream.getTracks().forEach((t) => t.stop())
             stream = await navigator.mediaDevices.getUserMedia({
-              video: { deviceId: { exact: mainId } },
+              video: { deviceId: { exact: mainId }, frameRate: { ideal: RECORD_FPS } },
               audio: false,
             }).catch(() => navigator.mediaDevices.getUserMedia({ video: videoConstraints, audio: false }))
           }
